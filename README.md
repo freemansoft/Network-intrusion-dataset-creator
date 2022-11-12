@@ -13,17 +13,17 @@ This runs as a multi-processing application with 4 python processes plus tshark
 
 | Stage | Python Module  | | Explanation |
 | - | - | -  | - |
-| Ethernet interface _or_ pcap or pcapng file |                     | \| | data source for packet_dict |
-|                                             | _tshark not Python_ | \| | converts to one line per packet json-sh format |
-| subprocess pipe                             |                   | \| | communication between tshark and the Python program
-|                                             | `PacketCapture`   | \| | reads from tshark output - massages labels |
-| sharedQ                                     |                   | \| | communication Queue |
-|                                             | `PacketAnalyze`   | \| | protocol detectors and protocol statistics |
-| servicesQ                                   |                   | \| | communicaton Queue  |
-|                                             | `ServiceIdentity` | \| | higher level TCP and UDP service counts |
-| timesQ                                      |                   | \| | communicaton Queue  |
-|                                             | `TimesAndCounts`  | \| | time windowing and file writer |
-| csv file                                    |                   | \| | feature file for model training |
+| Ethernet interface _or_ `pcap`/`pcapng` |                                   | \| | data source for packet_dict |
+|                                         | _tshark not Python_               | \| | converts to one line per packet json-sh format |
+| subprocess pipe                         |                                   | \| | communication between tshark and the Python program
+|                                         | `PacketCapture` - `capture.py`    | \| | reads from tshark output - massages labels |
+| sharedQ                                 |                                   | \| | communication Queue |
+|                                         | `PacketAnalyze` - `detectors.py`  | \| | filters using protocol detectors and protocol statistics |
+| servicesQ                               |                                   | \| | communicaton Queue  |
+|                                         | `ServiceIdentity` - `services.py` | \| | higher level TCP and UDP service counts |
+| timesQ                                  |                                   | \| | communicaton Queue  |
+|                                         | `TimesAndCounts` - `counts.py`    | \| | time windowing and file writer |
+| csv file                                |                                   | \| | feature file for model training |
 
 1. `tshark` captures live data or replays data from a pcap/pcapng file. It each packet as a line of text output in their ek format. I chose it because each record is on a single line so now multi-line json assembly is required. The Python processes launch it and listen to standard out.
 1. `PacketCapture` is a python process that reads tshark and then transforms the data to make it more consumable.  It converts the EK to true JSON and massages some of the label styles to json standard.  The final text is pushed into a message queue
