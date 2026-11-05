@@ -33,6 +33,10 @@ class datasetSummary:
     arp_count = 0
     # set in detectors
     igmp_count = 0
+    # set in detectors: ICMP and ICMPv6
+    icmp_count = 0
+    # set in detectors: fragment frames without their own transport header
+    ip_fragment_count = 0
 
     # set in detectors
     not_analyzed_ip = set()
@@ -55,6 +59,8 @@ class datasetSummary:
         self.udp_count = 0
         self.arp_count = 0
         self.igmp_count = 0
+        self.icmp_count = 0
+        self.ip_fragment_count = 0
         self.not_analyzed_ip_count = 0
         self.not_analyzed_ip = set()
         self.not_analyzed_not_ip_count = 0

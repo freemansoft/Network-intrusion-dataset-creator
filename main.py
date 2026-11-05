@@ -31,6 +31,9 @@ import queues
 import multiprocessing as mp
 import logging
 import sys
+
+# explicit import after the wildcard imports: `from counts import *` re-exports datetime.time
+import time
 from loggingconfig import load_logging
 
 
@@ -164,10 +167,28 @@ def main():
     time_c_p = mp.Process(target=time_counts.run)
     time_c_p.start()
 
-    data_c_p.join()
-    data_p_p.join()
-    services_p_p.join()
-    time_c_p.join()
+    # Wait for the pipeline. If any stage dies, stop the rest and exit non-zero instead of hanging
+    # (a stage that dies without forwarding the end-of-stream sentinel would block the ones after it).
+    stages = [data_c_p, data_p_p, services_p_p, time_c_p]
+    while any(stage.is_alive() for stage in stages):
+        failed = [s for s in stages if s.exitcode not in (None, 0)]
+        if failed:
+            logger.error(
+                "Pipeline stage failed (exit code %s); stopping the others. See errors.log",
+                failed[0].exitcode,
+            )
+            for stage in stages:
+                if stage.is_alive():
+                    stage.terminate()
+            for stage in stages:
+                stage.join()
+            sys.exit(1)
+        time.sleep(0.2)
+    for stage in stages:
+        stage.join()
+    if any(stage.exitcode != 0 for stage in stages):
+        logger.error("Pipeline stage failed; output may be incomplete. See errors.log")
+        sys.exit(1)
 
     logger.info("Party like its 1999")
 

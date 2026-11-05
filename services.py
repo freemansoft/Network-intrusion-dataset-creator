@@ -36,30 +36,36 @@ class ServiceIdentity:
     def run(self):
         self.logger.info("Starting")
         service_count = 0
-        while True:
-            if not self.inQ.empty():
-                Datalist = self.inQ.get()
-                if not Datalist:
-                    # empty datalist means done
-                    self.logger.debug("We're done - empty dataset received")
-                    self.outQ.put({})
-                    break
-                self.logger.debug("%s", Datalist)
-                self.logger.debug(
-                    "NotifiedAbout= %s invoke %d times",
-                    Datalist[transitkeys.key_id],
-                    service_count,
-                )
-                service_count += 1
-                ID = Datalist[transitkeys.key_id]
-                packet_dict = Datalist[transitkeys.key_packet]
-                packet_protocol = Datalist[transitkeys.key_protocol]
-                found_services = self.findServices(ID, packet_dict, packet_protocol)
-                if found_services:
-                    Datalist[transitkeys.key_services] = found_services
-                else:
-                    Datalist[transitkeys.key_services] = {"no service"}
-                self.outQ.put(Datalist)
+        try:
+            while True:
+                if not self.inQ.empty():
+                    Datalist = self.inQ.get()
+                    if not Datalist:
+                        # empty datalist means done
+                        self.logger.debug("We're done - empty dataset received")
+                        self.outQ.put({})
+                        break
+                    self.logger.debug("%s", Datalist)
+                    self.logger.debug(
+                        "NotifiedAbout= %s invoke %d times",
+                        Datalist[transitkeys.key_id],
+                        service_count,
+                    )
+                    service_count += 1
+                    ID = Datalist[transitkeys.key_id]
+                    packet_dict = Datalist[transitkeys.key_packet]
+                    packet_protocol = Datalist[transitkeys.key_protocol]
+                    found_services = self.findServices(ID, packet_dict, packet_protocol)
+                    if found_services:
+                        Datalist[transitkeys.key_services] = found_services
+                    else:
+                        Datalist[transitkeys.key_services] = {"no service"}
+                    self.outQ.put(Datalist)
+        except Exception:
+            # Forward the end-of-stream sentinel so downstream stages exit instead of waiting forever
+            self.logger.exception("Service identification failed")
+            self.outQ.put({})
+            raise
         self.logger.info("Exiting thread")
 
     def findServices(self, ID, packet_dict, packet_protocol):
