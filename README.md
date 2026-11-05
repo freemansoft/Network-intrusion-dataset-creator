@@ -275,6 +275,62 @@ Run some version of this:
 pkill -f tshark
 pkill -f python3
 ```
+# Per-host output and intrusion detection
+
+Whole-network counts per window catch floods and little else. A slow scan, an SSH brute force and a 40 MB upload were each
+invisible in them. Viewed per host, each one stands out. The tool can write per-host rows alongside the window rows, and
+`detect.py` turns both into alerts.
+
+```bash
+# windows.csv as before, plus hosts.csv: one row per (window, host)
+python3 main.py -s capture.pcap -wt 5000 -o windows.csv -oh hosts.csv --home-net 10.0.0.0/8
+
+# alerts as JSON lines, merged into incidents
+python3 detect.py windows.csv hosts.csv -o alerts.jsonl --incidents incidents.jsonl
+```
+
+`--home-net` (default: the private ranges) decides which hosts get a row in every window, and which transfers count as
+external. External hosts get rows only when they are among the `--host-topk` (default 20) busiest by fan-out. `--labels
+labels.csv` (columns `label,start,end,ips`, epoch seconds) fills a `label` column in both files, which makes the output a
+labeled dataset.
+
+Per-host columns count contact the host initiated: TCP SYNs, UDP to a port below 1024, ICMP echo requests and ARP
+requests. Otherwise servers, and the victims of a scan replying to it, would look like scanners. The full column list and
+rationale are in `docs/plans/2026-11-05-per-host-detector.md`.
+
+`detect.py` has three layers, with thresholds in `detect.THRESHOLDS` (override with `--set name=value`):
+
+| Layer | Alerts |
+| - | - |
+| Window rules | `syn_flood` (many half-open SYNs from many sources to one destination) |
+| Per-host rules | `port_scan` and `host_sweep` within one window; over 10 minutes: `slow_port_scan` and `slow_sweep` (contacts new to the host), `failed_connections` (SYNs without SYN-ACK), `login_bruteforce` (SYNs to ports 21, 22, 23, 3389, 5900); `large_upload` (client-side upload to external hosts over 60 s, well above download) |
+| Volume | `volume_<column>`: each column against a rolling median of the same capture's earlier windows, needing a material change and 2 consecutive windows (1 if extreme) |
+
+Every network has hosts that always look odd: a scanner you run, a busy resolver, a P2P client. Learn them once from a
+capture of normal traffic, leaving out hosts involved in known incidents, then suppress them. A suppressed host still
+alerts if it reaches 3x its learned peak.
+
+```bash
+python3 detect.py normal_windows.csv normal_hosts.csv -o /dev/null --learn-suppressions suppress.csv --learn-exclude 10.0.0.66
+python3 detect.py windows.csv hosts.csv -o alerts.jsonl --suppress suppress.csv
+```
+
+## Measured on labeled captures
+
+The captures are described in `datasets/SOURCES.md`.
+
+| Capture | Detected | Missed | Windows with a false alarm |
+| - | - | - | - |
+| Synthetic attacks injected into real CTU-13 university traffic, suppressions learned from another day | fast and slow port scan, spoofed SYN flood, SSH brute force, 40 MB upload, each naming the right host within seconds | DNS tunnel, C2 beacon | 0% |
+| CTU-13 scenario 5 (Virut bot), suppressions learned from scenario 11 | the bot, 200 s after its activity starts | | 0.83% |
+| CTU-13 scenario 11 (Rbot ICMP DDoS) | the DDoS | IRC C2 setup | high: several busy background hosts were not seen in the 30-minute capture used for learning |
+| IoT-23 Mirai, 24 h | all 4 floods, and the bot's C2 connection attempts | | 0.03% |
+| DARPA 1999 week 5 Monday, 22 h | 10 of 26 labeled attacks: SYN flood, UDP storm, 2 apache2 DoS, 2 smurf, telnet password guessing, dictionary brute force, warezclient, selfping | exploits and other payload-level or few-packet attacks | 0.80% (0.22% without a DNS storm from a misconfigured host that the dataset documents) |
+| DARPA 2000 LLDoS | the DDoS flood | sweep (seen only as router ARP), probe, exploit, trojan install | 0.9% |
+
+This approach cannot see payloads, so exploits, web attacks, DNS tunnels and C2 inside normal TLS stay invisible, as does
+anything a host does at a rate below its own normal. Run it alongside Zeek, Suricata or RITA, not instead of them.
+
 # performance
 This progam makes use of 5 cores, 4 for python Python and one for tshark.  
 It maxes out the cores so hyperthreaded cores will not count towards performance.
