@@ -172,3 +172,18 @@ def test_entropy():
     assert entropy(Counter()) == 0.0
     assert entropy(Counter({"a": 5})) == 0.0
     assert entropy(Counter({"a": 1, "b": 1})) == 1.0
+
+
+def test_udp_between_high_ports_is_not_an_initiated_contact():
+    rows = rows_by_host(feed([("udp", udp("10.0.0.5", "10.0.0.6", 40000, 25326))]))
+    assert rows["10.0.0.5"]["contacted_ports"] == 0
+    assert rows["10.0.0.5"]["contacted_ips"] == 0
+
+
+def test_window_columns_name_top_talkers_by_packets():
+    packets = [
+        ("tcp", tcp(f"198.51.100.{i}", "10.0.0.80", 1024, 80, ack=True))
+        for i in range(1, 6)
+    ]
+    columns = feed(packets).window_columns()
+    assert columns["top_dst_by_packets"] == "10.0.0.80"

@@ -91,6 +91,8 @@ class TimesAndCounts:
         "top_src_by_contacted_ips",
         "max_contacting_ips_per_dst",
         "top_dst_by_contacting_ips",
+        "top_src_by_packets",
+        "top_dst_by_packets",
         "entropy_src_ip",
         "entropy_dst_ip",
         "entropy_dst_port",

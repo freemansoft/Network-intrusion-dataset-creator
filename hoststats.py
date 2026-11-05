@@ -5,7 +5,8 @@
 # "Contacted" means contact this host initiated, so that servers answering many clients and the
 # victim of a scan (replying with RSTs to the scanner's ephemeral ports) do not look like scanners:
 #   TCP: a SYN without ACK               -> contacted dst ip and dst port
-#   UDP: dst port <= src port            -> contacted dst ip and dst port (client -> service)
+#   UDP: dst port < 1024 and <= src port -> contacted dst ip and dst port (client -> well-known
+#        service; traffic between two high ports is too often replies or P2P to call initiated)
 #   ICMP/ICMPv6 echo request, ARP        -> contacted dst ip
 
 import ipaddress
@@ -203,6 +204,7 @@ class WindowHosts:
             and dport is not None
             and sport is not None
             and int(dport) <= int(sport)
+            and int(dport) < 1024
         ):
             initiated, initiated_port = True, dport
         elif protocol == "icmp" and (
@@ -260,6 +262,12 @@ class WindowHosts:
             "top_src_by_contacted_ips": ips_ip,
             "max_contacting_ips_per_dst": srcs,
             "top_dst_by_contacting_ips": srcs_ip,
+            "top_src_by_packets": self.src_counts.most_common(1)[0][0]
+            if self.src_counts
+            else "",
+            "top_dst_by_packets": self.dst_counts.most_common(1)[0][0]
+            if self.dst_counts
+            else "",
             "entropy_src_ip": round(entropy(self.src_counts), 4),
             "entropy_dst_ip": round(entropy(self.dst_counts), 4),
             "entropy_dst_port": round(entropy(self.dst_port_counts), 4),

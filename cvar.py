@@ -102,6 +102,8 @@ class windowcounts:
     top_src_by_contacted_ips = ""
     max_contacting_ips_per_dst = 0
     top_dst_by_contacting_ips = ""
+    top_src_by_packets = ""
+    top_dst_by_packets = ""
     entropy_src_ip = 0.0
     entropy_dst_ip = 0.0
     entropy_dst_port = 0.0
