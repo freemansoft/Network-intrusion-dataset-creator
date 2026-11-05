@@ -10,3 +10,6 @@ __pycache__
 *.json
 *.gz
 *.log
+
+# shared Claude Code project settings (plugins)
+!.claude/settings.json
