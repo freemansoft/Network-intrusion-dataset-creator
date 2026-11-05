@@ -51,7 +51,7 @@ New service or protocol counts also need a detector in `services.py` or `detecto
 
 ## Claude Code plugins
 
-Project plugins are declared in `.claude/settings.json`; one-time install commands and the reasons for leaving out a `SessionStart` hook and `skill-creator` are in the README's "Claude Code plugins" section. `.gitignore` excludes `*.json`, so `.claude/settings.json` is un-ignored explicitly.
+Project plugins (`superpowers`, `skill-creator`, `security-guidance`, `claude-md-management`) are declared in `.claude/settings.json`; one-time install commands and the reason for leaving out a `SessionStart` install hook are in the README's "Claude Code plugins" section. Sessions signed in with a claude.ai account may also see `anthropic-skills:skill-creator`, which overlaps the project's `skill-creator`. `.gitignore` excludes `*.json`, so `.claude/settings.json` is un-ignored explicitly.
 
 ## Logging
 
