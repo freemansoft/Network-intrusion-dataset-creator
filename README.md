@@ -359,3 +359,23 @@ Maximum of 20 packets or 10 seconds whichever is first. The large packet window 
 # Source Code standards
 The source tree is formatted with _black_ in _Visual Studio Code_ extension
 
+
+# Claude Code plugins
+
+`.claude/settings.json` declares the `claude-plugins-official` marketplace and enables three plugins for this project:
+
+* `superpowers` - brainstorming, planning, TDD, systematic debugging and subagent-driven development workflows
+* `security-guidance` - hooks that flag risky edits and review the diff when Claude finishes a turn
+* `claude-md-management` - audits and updates `CLAUDE.md`
+
+Trusting the folder adds the marketplace, but enabling a plugin in project settings does not download one hosted outside the marketplace repository. `superpowers` lives in its own repository, so it can show as "enabled in project settings but isn't installed here" until it is installed once per machine:
+
+```bash
+claude plugin install superpowers@claude-plugins-official --scope project
+claude plugin install security-guidance@claude-plugins-official --scope project
+claude plugin install claude-md-management@claude-plugins-official --scope project
+```
+
+The last two are usually no-ops, since plugins stored inside the marketplace repository are fetched automatically. There is deliberately no `SessionStart` hook running these installs: re-running an install never upgrades an existing plugin, and the hook would execute plugin-manager commands unattended at every session start. Upgrades come from Claude Code's background auto-update for this marketplace, or deliberately with `claude plugin update <plugin>@claude-plugins-official --scope project`.
+
+`skill-creator` is deliberately not enabled here. The copy synced from a claude.ai account (`anthropic-skills:skill-creator`) overlaps it, and `superpowers` includes a `writing-skills` skill. A contributor who authors skills while using an API key, Bedrock, Vertex or a gateway can install it for themselves with `claude plugin install skill-creator@claude-plugins-official --scope user`.

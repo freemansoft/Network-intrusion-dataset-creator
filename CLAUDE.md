@@ -49,6 +49,10 @@ A new column must be added in three places:
 
 New service or protocol counts also need a detector in `services.py` or `detectors.py`. The README's sample CSV table and "Issues" list document current column semantics and known gaps; update them when column behavior changes.
 
+## Claude Code plugins
+
+Project plugins are declared in `.claude/settings.json`; one-time install commands and the reasons for leaving out a `SessionStart` hook and `skill-creator` are in the README's "Claude Code plugins" section. `.gitignore` excludes `*.json`, so `.claude/settings.json` is un-ignored explicitly.
+
 ## Logging
 
 Logging is configured by `logging_config.yaml` (loaded by `loggingconfig.load_logging()`, which tests also call). Each run overwrites `info.log`, `errors.log` and `debug.log` in the working directory. Per-packet detail is logged at `debug`.
