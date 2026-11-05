@@ -34,6 +34,7 @@ import sys
 
 # explicit import after the wildcard imports: `from counts import *` re-exports datetime.time
 import time
+from hoststats import DEFAULT_HOME_NET, HomeNet, load_labels
 from loggingconfig import load_logging
 
 
@@ -107,6 +108,41 @@ def main():
         help="tshark program [" + settings.tshark_program + "]",
         action="store",
     )
+    parser.add_argument(
+        "-oh",
+        "--hostfile",
+        default=None,
+        help="also write per-host rows for each window to this CSV [off]",
+        action="store",
+    )
+    parser.add_argument(
+        "--home-net",
+        default=",".join(DEFAULT_HOME_NET),
+        help="comma-separated CIDRs treated as home (inside) addresses ["
+        + ",".join(DEFAULT_HOME_NET)
+        + "]",
+        action="store",
+    )
+    parser.add_argument(
+        "--host-topk",
+        default=20,
+        help="external hosts per window written to the host file, by fan-out [20]",
+        action="store",
+        type=int,
+    )
+    parser.add_argument(
+        "--novelty-horizon",
+        default=600,
+        help="seconds a host remembers a contacted ip/port before it counts as new again [600]",
+        action="store",
+        type=int,
+    )
+    parser.add_argument(
+        "--labels",
+        default=None,
+        help="CSV of labeled attacks (label,start,end[,ips]; epoch seconds) for the label column",
+        action="store",
+    )
     args = parser.parse_args()
     logger.info("main:main Running with: %s", vars(args))
 
@@ -129,6 +165,17 @@ def main():
         logger.error(
             "Must specifiy either the time window or the packet count window see --help"
         )
+        sys.exit(2)
+
+    # Validate everything that can fail before starting any stage: a stage left running without
+    # its consumer blocks on its queue and the program never exits.
+    home_net = [c.strip() for c in args.home_net.split(",") if c.strip()]
+    try:
+        HomeNet(home_net)
+        labels = load_labels(args.labels) if args.labels else ()
+    except (OSError, ValueError, KeyError) as error:
+        logger.error("Invalid --home-net or --labels: %s", error)
+        print(f"Invalid --home-net or --labels: {error}", file=sys.stderr)
         sys.exit(2)
 
     data_collect = PacketCapture(
@@ -163,6 +210,11 @@ def main():
         settings.packet_window,
         settings.output_file_name,
         queues.timesQ,
+        host_file_path=args.hostfile,
+        home_net=home_net,
+        host_topk=args.host_topk,
+        novelty_horizon_msec=args.novelty_horizon * 1000,
+        labels=labels,
     )
     time_c_p = mp.Process(target=time_counts.run)
     time_c_p.start()
