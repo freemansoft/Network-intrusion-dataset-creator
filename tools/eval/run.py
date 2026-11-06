@@ -17,6 +17,7 @@ cores).
 import argparse
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -108,8 +109,12 @@ def capture(pcap, run_dir, dataset, recapture):
     if os.path.exists(info):
         with open(info) as f:
             for line in f:
-                if "recognized=" in line:
-                    summary = line[line.index("recognized=") :].strip()
+                found = re.search(r"recognized=\d+ unrecognized=\d+ pps=[\d.]+", line)
+                if found:
+                    summary = found.group(0)
+                    skipped = re.search(r"'not_analyzed_ip': (\{[^}]*\})", line)
+                    if skipped and skipped.group(1) != "set()":
+                        summary += " not_analyzed_ip=" + skipped.group(1)
     return pcap, result.returncode, int(time.time() - started), summary
 
 
