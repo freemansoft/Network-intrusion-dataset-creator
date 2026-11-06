@@ -11,5 +11,12 @@ __pycache__
 *.gz
 *.log
 
+# small generated captures used by tests/pipeline_test.py (see tests/fixtures/make_fixtures.py)
+!/tests/fixtures/*.pcap
+
+# downloaded labeled intrusion captures; only the provenance record is committed
+/datasets/*
+!/datasets/SOURCES.md
+
 # shared Claude Code project settings (plugins)
 !.claude/settings.json

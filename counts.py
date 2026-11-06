@@ -66,7 +66,19 @@ class TimesAndCounts:
         "num_packets",
         "window_start_time",
         "window_end_time",
+        # appended after the window times so existing column positions do not move
+        "icmp_frame_length",
+        "num_icmp",
+        "num_icmp_echo",
+        "num_icmp_unreach",
+        "ip_fragment_frame_length",
+        "num_ip_fragments",
     ]
+
+    # ICMP type values for echo request/reply and destination unreachable, IPv4 and IPv6
+    ICMP_ECHO_TYPES = {"0", "8", "128", "129"}
+    ICMP_UNREACH_V4 = "3"
+    ICMP_UNREACH_V6 = "1"
 
     def __init__(
         self, name, window_length_time, window_length_count, csv_file_path, inQ
@@ -82,6 +94,15 @@ class TimesAndCounts:
         )
 
     def run(self):
+        # Last stage: nothing downstream to signal. Log so the failure lands in errors.log, then
+        # re-raise so the process exits non-zero and main.py stops the other stages.
+        try:
+            self._run()
+        except Exception:
+            self.logger.exception("Window counting failed")
+            raise
+
+    def _run(self):
         self.logger.info("Starting")
         with open(self.csv_file_path, "w") as csvfile:
 
@@ -210,14 +231,16 @@ class TimesAndCounts:
             except KeyError:  # does not exist in ipv6
                 target_window.tcp_ip_length = target_window.tcp_ip_length + 0
 
+            # tcp.len can be missing on truncated or malformed headers
             target_window.tcp_length = target_window.tcp_length + int(
-                packet_dict["tcp.len"]
+                packet_dict.get("tcp.len", 0)
             )
             self.count_services(services, target_window)
             target_window.num_tcp += 1
             self.accumulate_IDs(ID, target_window)
             self.accumulate_ports(
-                [packet_dict["tcp.srcport"], packet_dict["tcp.dstport"]], target_window
+                [packet_dict.get("tcp.srcport"), packet_dict.get("tcp.dstport")],
+                target_window,
             )
 
         elif Prot1 == "udp":
@@ -231,14 +254,16 @@ class TimesAndCounts:
             except KeyError:  # does not exist in ipv6
                 target_window.udp_ip_length = target_window.udp_ip_length + 0
 
+            # udp.length can be missing on truncated or malformed headers
             target_window.udp_length = target_window.udp_length + int(
-                packet_dict["udp.length"]
+                packet_dict.get("udp.length", 0)
             )
             self.count_services(services, target_window)
             target_window.num_udp += 1
             self.accumulate_IDs(ID, target_window)
             self.accumulate_ports(
-                [packet_dict["udp.srcport"], packet_dict["udp.dstport"]], target_window
+                [packet_dict.get("udp.srcport"), packet_dict.get("udp.dstport")],
+                target_window,
             )
 
         elif Prot1 == "arp":
@@ -250,6 +275,20 @@ class TimesAndCounts:
         elif Prot1 == "igmp":
             # TODO become more clever about igmp if needed
             target_window.num_igmp += 1
+        elif Prot1 == "icmp":
+            target_window.icmp_frame_length += int(packet_dict["frame.len"])
+            target_window.num_icmp += 1
+            icmp_type = str(packet_dict.get("icmp.type", ""))
+            icmpv6_type = str(packet_dict.get("icmpv6.type", ""))
+            if icmp_type in self.ICMP_ECHO_TYPES or icmpv6_type in self.ICMP_ECHO_TYPES:
+                target_window.num_icmp_echo += 1
+            if icmp_type == self.ICMP_UNREACH_V4 or icmpv6_type == self.ICMP_UNREACH_V6:
+                target_window.num_icmp_unreach += 1
+            self.accumulate_IDs(ID, target_window)
+        elif Prot1 == "ipfrag":
+            target_window.ip_fragment_frame_length += int(packet_dict["frame.len"])
+            target_window.num_ip_fragments += 1
+            self.accumulate_IDs(ID, target_window)
 
     # an individual packet could be more than one thing.  Some SSDP traffic has HTTP over UDP
     def count_services(self, slist, target_window):
@@ -294,7 +333,7 @@ class TimesAndCounts:
 
     def accumulate_ports(self, ports, target_window):
         # rely on set symantics, add array elements if not present
-        target_window.ports.update(ports)
+        target_window.ports.update(port for port in ports if port is not None)
 
     # map target_window to a dictonary to bind to the csv writer
     # Write one time window as a row to the CSV file

@@ -74,37 +74,46 @@ class PacketCapture:
         start_timer = time.perf_counter()
 
         # for line in p.stdout:
-        while True:
+        try:
+            while True:
 
-            line = p.stdout.readline()
-            if "layers" in line:
-                num_read += 1
-                self.logger.debug("Working with line %s", line)
-                json_obj = json.loads(line.strip())
-                source_filter = json_obj["layers"]
-                keyval = source_filter.items()
-                self.logger.debug("Working with dict %s", keyval)
-                a = self.unwrap(keyval)
-                # I've seen some data sets with dates from the future on the Mac M1
-                # Can't cache the time because could be reading from a network channel
-                now = time.time()
-                packet_time = float(a["frame.time_epoch"])
-                self.logger.debug(
-                    "Working at time %f on packet at time %f", now, packet_time
-                )
-                if now >= packet_time:
-                    self.send_data(a)
+                line = p.stdout.readline()
+                if "layers" in line:
+                    num_read += 1
+                    self.logger.debug("Working with line %s", line)
+                    json_obj = json.loads(line.strip())
+                    source_filter = json_obj["layers"]
+                    keyval = source_filter.items()
+                    self.logger.debug("Working with dict %s", keyval)
+                    a = self.unwrap(keyval)
+                    # I've seen some data sets with dates from the future on the Mac M1
+                    # Can't cache the time because could be reading from a network channel
+                    now = time.time()
+                    packet_time = float(a["frame.time_epoch"])
+                    self.logger.debug(
+                        "Working at time %f on packet at time %f", now, packet_time
+                    )
+                    if now >= packet_time:
+                        self.send_data(a)
+                    else:
+                        self.logger.warning(
+                            "Dropping future packet %s", a["frame.time"]
+                        )
                 else:
-                    self.logger.warn("Dropping future packet %s", a["frame.time"])
-            else:
-                # we get blank lines
-                self.logger.debug("Ignoring: %s", line)
-                pass
-            if not line and p.poll() is not None:
-                # possible could delay here to let processing complete
-                self.logger.debug("We're done - no input and tshark exited")
-                self.send_data({})
-                break
+                    # we get blank lines
+                    self.logger.debug("Ignoring: %s", line)
+                    pass
+                if not line and p.poll() is not None:
+                    # possible could delay here to let processing complete
+                    self.logger.debug("We're done - no input and tshark exited")
+                    self.send_data({})
+                    break
+        except Exception:
+            # Forward the end-of-stream sentinel so downstream stages exit instead of waiting forever
+            self.logger.exception("Capture failed after %d packets", num_read)
+            self.send_data({})
+            p.kill()
+            raise
         end_timer = time.perf_counter()
         calc_rate = num_read / (end_timer - start_timer)
         self.logger.info("Ingested: %d rate: %f ", num_read, calc_rate)
@@ -120,6 +129,10 @@ class PacketCapture:
         self.outQ.put(dictionary)
 
     # this function unwraps a multi level JSON object into a python dictionary with key value pairs
+    # The first (outermost) occurrence of a field wins. tshark nests quoted headers inside some layers,
+    # for example an ICMP error carries the offending packet's IP and UDP/TCP header inside its icmp
+    # object. Letting the nested copy overwrite the outer one turned ICMP errors into fake UDP/TCP
+    # packets with src and dst swapped, and crashed counts.py when the quoted header was truncated.
 
     def unwrap(self, keyval):
 
@@ -147,10 +160,11 @@ class PacketCapture:
                 self.logger.debug("Registered mapping: %s --> %s", key1, massagedKey1)
 
             if isinstance(value1, (str, bool, list)):
-                newKeyval[self.keymap[key1]] = value1
+                newKeyval.setdefault(self.keymap[key1], value1)
             elif value1 is None:
                 self.logger.debug("Ignoring and tossing null value %s", key1)
                 pass
             else:
-                newKeyval.update(self.unwrap(value1.items()))
+                for nested_key, nested_value in self.unwrap(value1.items()).items():
+                    newKeyval.setdefault(nested_key, nested_value)
         return newKeyval

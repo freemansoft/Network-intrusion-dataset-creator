@@ -33,6 +33,32 @@ import logging
 
 # separate out tcp,udp and arp traffic
 
+# Fields that detectors compare or use as addresses. tshark EK emits a list when a field repeats
+# inside one layer; the first value is the one for this packet's own header.
+ADDRESSING_FIELDS = (
+    "ip.proto",
+    "ip.src",
+    "ip.dst",
+    "ipv6.src",
+    "ipv6.dst",
+    "ipv6.nxt",
+    "arp.src.proto_ipv4",
+    "arp.dst.proto_ipv4",
+)
+
+# Layer-4 markers. A fragment frame carrying none of these has no transport header of its own.
+L4_FIELDS = ("tcp.srcport", "udp.srcport", "icmp.type", "icmpv6.type")
+
+TRUE_VALUES = (True, "1", "true", "True")
+
+
+def normalize_addressing(packet_dict):
+    for key in ADDRESSING_FIELDS:
+        value = packet_dict.get(key)
+        if isinstance(value, list):
+            packet_dict[key] = value[0] if value else None
+    return packet_dict
+
 
 class PacketAnalyse:
     def __init__(self, name, inQ, outQ):
@@ -45,18 +71,32 @@ class PacketAnalyse:
         dvar = datasetSummary()
         start_timer = time.perf_counter()
         self.logger.info("Starting")
-        while True:
-            if not self.inQ.empty():
-                thePacket = self.inQ.get()
-                if not thePacket:
-                    self.logger.debug("We're done - empty dictionary received on queue")
-                    self.outQ.put([])
-                    break
-                if not self.find_ip(thePacket, dvar):
-                    self.find_non_ip(thePacket, dvar)
+        try:
+            while True:
+                if not self.inQ.empty():
+                    thePacket = self.inQ.get()
+                    if not thePacket:
+                        self.logger.debug(
+                            "We're done - empty dictionary received on queue"
+                        )
+                        self.outQ.put([])
+                        break
+                    normalize_addressing(thePacket)
+                    if not self.find_ip(thePacket, dvar):
+                        self.find_non_ip(thePacket, dvar)
+        except Exception:
+            # Forward the end-of-stream sentinel so downstream stages exit instead of waiting forever
+            self.logger.exception("Packet analysis failed")
+            self.outQ.put([])
+            raise
         end_timer = time.perf_counter()
         recognized_count = (
-            dvar.tcp_count + dvar.udp_count + dvar.arp_count + dvar.igmp_count
+            dvar.tcp_count
+            + dvar.udp_count
+            + dvar.arp_count
+            + dvar.igmp_count
+            + dvar.icmp_count
+            + dvar.ip_fragment_count
         )
         unrecognized_count = dvar.not_analyzed_ip_count + dvar.not_analyzed_not_ip_count
         coarse_pps = recognized_count / (end_timer - start_timer)
@@ -148,16 +188,24 @@ class PacketAnalyse:
 
     # Cover for all the IP based detectors
     # The return code says we categorized as IP - not that detected specific IP
+    # ICMP and fragments are checked before TCP/UDP: an ICMP error quotes a TCP/UDP header, and a
+    # non-final fragment has an IP protocol number but no transport header of its own.
     def find_ip(self, packet_dict, dvar):
+        if self.find_icmp(packet_dict, dvar):
+            return True
+        if self.find_ip_fragment(packet_dict, dvar):
+            return True
         if not self.find_tcp(packet_dict, dvar):
             if not self.find_udp(packet_dict, dvar):
                 if not self.find_igmp(packet_dict, dvar):
                     # Can't filter on ip.proto at the top because of IPv6 picked up in the detectors
-                    if "ip.proto" in packet_dict:
+                    if "ip.proto" in packet_dict or "ipv6.nxt" in packet_dict:
                         dvar.not_analyzed_ip_count += 1
-                        # ip.proto does not always exist if not ip
-                        self.logger.debug("Packet was IPv4 but not TCP, UDP, IGMP ")
-                        packet_ip_proto = packet_dict["ip.proto"]
+                        # ip.proto exists for IPv4, ipv6.nxt (next header) for IPv6
+                        self.logger.debug("Packet was IP but not TCP, UDP, ICMP, IGMP")
+                        packet_ip_proto = packet_dict.get(
+                            "ip.proto", packet_dict.get("ipv6.nxt")
+                        )
                         dvar.not_analyzed_ip.add(packet_ip_proto)
                         # should this be debug() info() or warn() You could have a lot of these
                         self.logger.debug(
@@ -165,9 +213,61 @@ class PacketAnalyse:
                             packet_ip_proto,
                         )
                     else:
-                        # TODO: Capture ipv6.<something> to put it in the ip not analyzed bucket
-                        # TODO: Unrecognized IPv6 may leak out of here and get categorized as non IP
                         return False
+        return True
+
+    # ICMP (IPv4 protocol 1) and ICMPv6. Errors such as destination unreachable carry a quoted
+    # IP + TCP/UDP header; that quoted header is not a TCP/UDP packet and must not be counted as one.
+    def find_icmp(self, packet_dict, dvar):
+        if (
+            "icmp.type" in packet_dict
+            and packet_dict.get("ip.proto") == "1"
+            and "ip.src" in packet_dict
+            and "ip.dst" in packet_dict
+        ):
+            packet_key = self.gen_src_dst_key(
+                packet_dict["ip.src"], packet_dict["ip.dst"]
+            )
+        elif (
+            "icmpv6.type" in packet_dict
+            and "ipv6.src" in packet_dict
+            and "ipv6.dst" in packet_dict
+        ):
+            packet_key = self.gen_ipv6_src_dst_key(
+                packet_dict["ipv6.src"], packet_dict["ipv6.dst"]
+            )
+        else:
+            return False
+        dvar.icmp_count += 1
+        self.send(packet_key, packet_dict, "icmp")
+        return True
+
+    # A fragment frame with no transport header of its own. tshark reassembles fragments by default
+    # and attaches the reassembled TCP/UDP/ICMP layer to the final fragment, which is counted under its
+    # protocol as usual. The earlier fragments would otherwise be dropped, hiding most of a fragmented
+    # flood. For IPv6, next header 44 is the fragment header; tshark nests that header, and
+    # capture.unwrap names its offset field "ipv6_fraghdr.offset".
+    def find_ip_fragment(self, packet_dict, dvar):
+        if any(field in packet_dict for field in L4_FIELDS):
+            return False
+        ipv4_fragment = packet_dict.get("ip.flags.mf") in TRUE_VALUES or str(
+            packet_dict.get("ip.frag_offset", "0")
+        ) not in ("0", "")
+        ipv6_fragment = (
+            packet_dict.get("ipv6.nxt") == "44" or "ipv6_fraghdr.offset" in packet_dict
+        )
+        if ipv4_fragment and "ip.src" in packet_dict and "ip.dst" in packet_dict:
+            packet_key = self.gen_src_dst_key(
+                packet_dict["ip.src"], packet_dict["ip.dst"]
+            )
+        elif ipv6_fragment and "ipv6.src" in packet_dict and "ipv6.dst" in packet_dict:
+            packet_key = self.gen_ipv6_src_dst_key(
+                packet_dict["ipv6.src"], packet_dict["ipv6.dst"]
+            )
+        else:
+            return False
+        dvar.ip_fragment_count += 1
+        self.send(packet_key, packet_dict, "ipfrag")
         return True
 
     # Picks interested attributes from packets and saves them into a list
@@ -372,25 +472,17 @@ class PacketAnalyse:
         return success
 
     # only doing IGMP row counts until someone writes code here
-    # ipv6 not tested
+    # IGMP is IPv4 only (protocol 2). Its IPv6 counterpart, MLD, is ICMPv6 and is counted by find_icmp.
+    # This used to accept any IPv6 packet that reached it, which counted ICMPv6 as IGMP.
     def find_igmp(self, packet_dict, dvar):
         success = False
-        if "ip.proto" in packet_dict and (packet_dict["ip.proto"] != "2"):
+        if packet_dict.get("ip.proto") != "2":
             return success
 
         try:
-            # TODO do we count all ip.proto or look for other markers
             if "ip.src" in packet_dict and "ip.dst" in packet_dict:
                 packet_key = self.gen_src_dst_key(
                     packet_dict["ip.src"], packet_dict["ip.dst"]
-                )
-                # I don't know anything about IGMP so just set the pack count to 1 all the time
-                dvar.igmp_count += 1
-                self.send(packet_key, packet_dict, "igmp")
-                success = True
-            elif "ipv6.src" in packet_dict and "ipv6.dst" in packet_dict:
-                packet_key = self.gen_ipv6_src_dst_key(
-                    packet_dict["ipv6.src"], packet_dict["ipv6.dst"]
                 )
                 # I don't know anything about IGMP so just set the pack count to 1 all the time
                 dvar.igmp_count += 1

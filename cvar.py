@@ -76,6 +76,17 @@ class windowcounts:
     num_arp = 0
     num_igmp = 0
 
+    # ICMP and ICMPv6 (frame.len, counts). Echo = echo request/reply, unreach = destination unreachable
+    icmp_frame_length = 0
+    num_icmp = 0
+    num_icmp_echo = 0
+    num_icmp_unreach = 0
+
+    # fragment frames that carry no transport header of their own (frame.len, count).
+    # The final fragment of a reassembled datagram is counted under its protocol instead.
+    ip_fragment_frame_length = 0
+    num_ip_fragments = 0
+
     # all the calculated src/dst combinations
     IDs = set()
     # all the ports in this window

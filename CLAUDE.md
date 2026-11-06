@@ -14,14 +14,18 @@ python3 main.py -s Razi_15012021.pcap -wp 100                    # 100-packet wi
 # Live capture (may need sudo for promiscuous mode)
 python3 main.py -i eth0 -l 120 -wt 5000
 
-# Tests (only tumblingwindow.py is covered)
+# Tests (pipeline_test.py runs main.py on tests/fixtures/*.pcap and is skipped without tshark)
 python3 -m pytest
 python3 -m pytest tests/tumblingwindow_test.py::test_inside_window
+
+# Regenerate the fixture captures (needs scapy, which is not in requirements.txt)
+python3 tests/fixtures/make_fixtures.py
 ```
 
 - `tshark` (Wireshark CLI) must be on the PATH, or passed in with `-t`.
 - Code is formatted with `black`. There is no linter config.
-- `*.pcap`, `*.pcapng`, `*.cap`, `*.csv` and `*.log` are gitignored. The sample captures in the repo root exist only locally (more are at https://wiki.wireshark.org/SampleCaptures); `sample_output/*.csv` is the only committed output.
+- `*.pcap`, `*.pcapng`, `*.cap`, `*.csv` and `*.log` are gitignored. The sample captures in the repo root exist only locally (more are at https://wiki.wireshark.org/SampleCaptures); `sample_output/*.csv` is the only committed output. `tests/fixtures/*.pcap` is un-ignored explicitly.
+- `datasets/` holds downloaded labeled intrusion captures and is gitignored. `datasets/SOURCES.md` (committed) records each file's URL, SHA-256, label source and attack intervals.
 
 ## Architecture
 
@@ -33,10 +37,10 @@ tshark -T ek ─pipe─> PacketCapture ─sharedQ─> PacketAnalyse ─serviceQ�
 ```
 
 - **Fork only.** `main.py` forces `mp.set_start_method("fork")`. The queues are module globals that child processes inherit, so `spawn` (the macOS default) breaks the pipeline. Don't add designs that rely on pickling state into children.
-- **Shutdown.** Each stage forwards an empty `{}`/`[]` downstream when its input ends, then exits. Any new stage must pass this sentinel along, or later stages will never stop.
+- **Shutdown.** Each stage forwards an empty `{}`/`[]` downstream when its input ends, then exits. Any new stage must pass this sentinel along, or later stages will never stop. Each stage's `run()` also forwards the sentinel and re-raises if it throws, and `main.py` stops the remaining stages and exits 1 when any stage exits non-zero. Keep both when adding a stage.
 - **Message shape.** Starting at `PacketAnalyse`, each queue message is a dict keyed by the constants in `transitkeys.py` (`Id`, `Packet`, `Protocol`, `Services`). `Id` is a node-pair key with src and dst sorted, so both directions of a conversation map to the same pair.
-- **Field names.** `capture.py` rewrites tshark's EK labels back into dotted Wireshark names (`ip_src` → `ip.src`, etc.). Detectors and services look up fields such as `packet_dict["frame.time_epoch"]` and `ip.len` by those dotted names.
-- **Protocol detection** (`detectors.py`). `find_ip` dispatches to `find_tcp`, `find_udp` and `find_igmp`. Anything that isn't IP goes to `find_non_ip`, which handles only ARP. Unrecognized packets are dropped but counted in `dvar.datasetSummary` (including the set of unanalyzed IP protocol numbers), which is logged once at exit and not written anywhere else.
+- **Field names.** `capture.py` rewrites tshark's EK labels back into dotted Wireshark names (`ip_src` → `ip.src`, etc.). Detectors and services look up fields such as `packet_dict["frame.time_epoch"]` and `ip.len` by those dotted names. The renaming is ad hoc, so check what `PacketCapture.unwrap` produces before matching a new field (the IPv6 fragment offset comes out as `ipv6_fraghdr.offset`). When a field appears in several layers, the outermost wins: an ICMP error nests the quoted IP/UDP header inside its `icmp` object, and letting that overwrite the outer header misclassified the packet.
+- **Protocol detection** (`detectors.py`). `find_ip` tries `find_icmp` (ICMP and ICMPv6) and `find_ip_fragment` first, then `find_tcp`, `find_udp` and `find_igmp` (IPv4 only). The order matters: ICMP errors carry quoted TCP/UDP ports, and non-final fragments have an IP protocol number but no transport header (tshark attaches the reassembled datagram to the final fragment, which is counted under its own protocol). Anything that isn't IP goes to `find_non_ip`, which handles only ARP. Unrecognized packets are dropped but counted in `dvar.datasetSummary` (including the set of unanalyzed IP protocol numbers), which is logged once at exit and not written anywhere else.
 - **Service detection** (`services.py`). Services are identified by the presence of a field or port. One packet can match several services (for example, SSDP is also counted as HTTP).
 - **Windowing.** `tumblingwindow.TumblingWindow` decides window boundaries. Windows are non-overlapping and bounded by time (msec), packet count, or both; the window start is inclusive and the end is exclusive. `counts.py` flushes empty windows when time jumps forward past them.
 
