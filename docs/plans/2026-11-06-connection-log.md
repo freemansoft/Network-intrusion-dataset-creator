@@ -86,8 +86,9 @@ header-truncated, so these columns are empty there.
 **Scope.** Default is every connection with a home address on either side (`--conn-scope home|all`). Outbound-only
 is a filter in the reader, not the writer, because `unknown_inbound_source` needs inbound rows.
 
-**Cost.** One dict lookup per packet and one row per connection. Measure on DARPA week 5 Monday (22 h) and PoshC2
-24 h; the pass must stay within 25% of today's time, or the table moves to a fifth process.
+**Cost.** One dict lookup per packet and one row per connection, in the counts process. Simplicity wins over speed:
+the table stays in that process whatever it costs. Record the runtime on DARPA week 5 Monday (22 h) and PoshC2 24 h
+before and after, so the cost is known.
 
 ### Acceptance criteria
 
@@ -97,10 +98,9 @@ is a filter in the reader, not the writer, because `unknown_inbound_source` need
    rows with a certificate; on Backoff, `http_host` is the bare C2 IP. DARPA week 5 rows carry HTTP facts and no TLS.
 3. `windows.csv` and `hosts.csv` are byte-identical to today's on every registered dataset except for the `ftpdata`
    change in two `hosts.csv` columns.
-4. Runtime within 25% of today's on the two captures above.
-5. `tools/eval/run.py` passes `-oc` and hands `connections.csv` to `detect.py`; `classify_inputs` recognizes the file
+4. `tools/eval/run.py` passes `-oc` and hands `connections.csv` to `detect.py`; `classify_inputs` recognizes the file
    by its header.
-6. Tests for the table (start, end, states, orientation, idle, cut-off), each handshake column and the fix in
+5. Tests for the table (start, end, states, orientation, idle, cut-off), each handshake column and the fix in
    `hosts.csv`. `pytest` passes.
 
 ## Step 2: beacons, from the connection log
