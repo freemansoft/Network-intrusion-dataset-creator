@@ -1,6 +1,7 @@
 # Plan: the connection log as the primary output
 
-Status: steps 0 and 1 done 2026-11-06 (results below each); step 2 next. Supersedes the window-summary framing; see the README section "What the window-summary
+Status: archived 2026-11-06. Steps 0, 1 and 2 are done (results below each); the keep-or-archive test came out
+mixed and the decision was to archive, so steps 3-5 were not started. Supersedes the window-summary framing; see the README section "What the window-summary
 approach is and isn't good for" and the findings kept in `docs/plans/2026-11-05-deferred-detection.md`.
 
 ## Why
@@ -133,7 +134,8 @@ minimum gap, SYN-retry collapsing, multicast exclusion, shipped allowlist, popul
 counted in `syn_retries`, and the per-pair facts are the connection's own TLS/HTTP columns. There is no separate
 contacts or facts file.
 
-`detect.py --connections connections.csv` runs the scorer at end of input and attaches `evidence` (no SNI,
+`detect.py` recognizes a connections file by its header, runs the scorer on each file separately (each is one
+recording, so two captures days apart are not one beacon span) and attaches `evidence` (no SNI,
 single-destination JA3, self-signed certificate, bare-IP Host, single-destination user agent) to every `beacon`
 alert.
 
@@ -143,6 +145,31 @@ Criteria 1-8 of the superseded plan's phase 1, unchanged, plus:
 
 9. Backoff and PoshC2 beacon alerts carry `evidence` of at least 2; the Microsoft and burst decoys, if they alert
    before the allowlist and filters, carry 0.
+
+### Step 2 results (2026-11-06)
+
+Measured with `tools/eval/run.py` on the final code, `beacon_allow.txt` holding only `udp/123` (NTP).
+
+| Criterion | Result |
+| - | - |
+| 1. Backoff and PoshC2 24 h alert | Met, each naming the implant host and C2 |
+| 2. Backoff and PoshC2 1 h alert | Met |
+| 3. Neither decoy alerts | Partly. The PoshC2 2 s bursts are stopped by the minimum gap. The Backoff Microsoft pair (52.184.216.174:443) alerts, because the allowlist deliberately has no vendor networks; it has evidence 0 |
+| 4. Mirai C2 raises `beacon` | Not met. Its contacts cover about 37% of the day, below the coverage minimum. It is still detected by `failed_connections`. NTP is quiet only because of the allowlist |
+| 5. Injected beacon alerts; at most 5 pairs on CTU | Injected beacon met. False pairs: 14 on the injected capture, 35 on CTU-5, 28 on CTU-11. They are BitTorrent peers (6881, 6889), web polling on 80 and 443 (Google, ad and CDN servers) and one SSH session. The CTU captures hold headers only, so none has evidence |
+| 6. At most 1 pair per DARPA attack-free day | Not met: 14 alerts in 10 days, 2 on 4 of the days. Ten are one host polling the TIME protocol (RFC 868, tcp/37) every 20 minutes; four are web pairs. Allowlisting tcp/37 would meet it, but was not done after seeing the result |
+| 7. Tests | Met, 94 pass |
+| 8. C2 first by score | PoshC2 24 h 1st (RITA's formula: 18th), PoshC2 1 h 1st, Backoff 1 h 1st, Backoff 24 h 2nd by 0.001 (behind an 11-contact Microsoft poll), IoT-23 7th with NTP 1st (RITA: 9th) |
+| 9. C2 evidence at least 2, decoys 0 | Met. Every C2 alert has 2 or 3 facts; every benign beacon pair on every dataset has 0 |
+
+Other detections are unchanged: DARPA week 5 10 of 26 (0.03% false-alarm windows with learned suppressions, 0.76%
+without, against 0.80% on `main`; the difference was not traced, the FTP-data port change in step 1 is the likely
+cause), injected capture 6 of 7 (the beacon is now found, the DNS tunnel is not), CTU-5 0.83%, IoT-23 5 of 5 at 0.03%,
+LLDoS 1 of 5 at 0.43%.
+
+Every false beacon pair above has evidence 0. Requiring evidence of at least 1 would therefore leave none on the
+captures with full packets (Active Countermeasures, DARPA) and still catch every C2 there, but it would also hide the
+injected beacon on the header-only CTU capture. That gate was not implemented.
 
 ## Keep or archive
 
@@ -156,6 +183,19 @@ Decide after step 2, on these numbers, all from `tools/eval/run.py` and `tools/e
 
 If the answer is archive: the README says so at the top, the harness stays as the deliverable, and the connection log
 is kept as a feature extractor for other tools. Nothing in steps 3-5 is started.
+
+### Decision (2026-11-06): archive
+
+| Question | Result | Verdict |
+| - | - | - |
+| Beats the reference where it falls short | PoshC2 24 h: 1st against RITA's 18th. IoT-23: 7th, below NTP | Half; the continue condition needs both |
+| Quiet enough on real background | CTU: 14, 35 and 28 pairs against a limit of 5. DARPA attack-free: 14 in 10 days | Archive: CTU is more than twice the limit |
+| Adds something the summaries did not | All four Active Countermeasures beacon labels and the injected beacon, none detected before | Continue |
+
+Timing finds beacons, but on a real network most beacons are benign: software updaters, ad and CDN polls, P2P peers
+and time protocols. What separated the C2 servers from them was the TLS/HTTP evidence, which needs full packets and is
+what Zeek's logs with RITA or AC-Hunter already provide from live traffic. The project is archived as informational:
+the README says so at the top, `tools/eval/` and the connection log stay as they are, and steps 3-5 are not started.
 
 ## Step 3: host profiles
 

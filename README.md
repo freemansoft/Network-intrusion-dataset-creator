@@ -1,4 +1,13 @@
 # Customizable Network intrusion dataset creator
+
+> **Archived (2026-11-06). Kept for information only; not maintained and not a working intrusion detector.**
+> The project tested whether time-window summaries of a capture, then per-host state and a per-connection log, could
+> detect intrusions in public labeled captures. Floods, scans, brute force, bulk uploads and some C2 beacons were found,
+> but the beacon scorer raised 14 to 35 benign beacon pairs per university capture, more than twice the limit set in
+> advance. What separated real C2 from benign polling was TLS/HTTP evidence that Zeek with RITA or AC-Hunter already
+> provides. The findings are in [What the window-summary approach is and isn't good for](#what-the-window-summary-approach-is-and-isnt-good-for)
+> and in `docs/plans/2026-11-06-connection-log.md`. The parts most likely to be reused are the evaluation harness in
+> `tools/eval/` and the connection log (`-oc`).
 This software enables the creation of a network intrusion dataset in CSV format. You can run it on a local server to create
 your own dataset or use this to read a PCAP from another source and convert that to CSV format based on the attributes you pick.
 
@@ -298,13 +307,14 @@ Per-host columns count contact the host initiated: TCP SYNs, UDP to a port below
 requests. Otherwise servers, and the victims of a scan replying to it, would look like scanners. The full column list and
 rationale are in `docs/plans/2026-11-05-per-host-detector.md`.
 
-`detect.py` has three layers, with thresholds in `detect.THRESHOLDS` (override with `--set name=value`):
+`detect.py` has four layers, with thresholds in `detect.THRESHOLDS` (override with `--set name=value`):
 
 | Layer | Alerts |
 | - | - |
 | Window rules | `syn_flood` (many half-open SYNs from many sources to one destination) |
 | Per-host rules | `port_scan` and `host_sweep` within one window; over 10 minutes: `slow_port_scan` and `slow_sweep` (contacts new to the host), `failed_connections` (SYNs without SYN-ACK), `login_bruteforce` (SYNs to ports 21, 22, 23, 3389, 5900); `large_upload` (client-side upload to external hosts over 60 s, well above download) |
 | Volume | `volume_<column>`: each column against a rolling median of the same capture's earlier windows, needing a material change and 2 consecutive windows (1 if extreme) |
+| Beacons | `beacon`: one alert per (host, destination, port) that a home host contacts at a steady interval for most of a connections file (coverage, regularity, symmetry and size scores, at least 10 contacts over 5 minutes). Needs a `connections.csv`; see below |
 
 Every network has hosts that always look odd: a scanner you run, a busy resolver, a P2P client. Learn them once from a
 capture of normal traffic, leaving out hosts involved in known incidents, then suppress them. A suppressed host still
@@ -317,6 +327,18 @@ python3 detect.py windows.csv hosts.csv -o alerts.jsonl --suppress suppress.csv
 
 `detect.py` takes any number of windows and hosts files, tells them apart by their header and reads them in time
 order, so consecutive daily captures of one sensor can be learned from or detected on as a single run.
+
+Connections files given to `detect.py` are scored for beacons, each file on its own. A `beacon` alert names the
+destination in `peer` and lists `facts` from the handshake columns: no SNI, a JA3 or user agent seen toward only this
+destination, a self-signed certificate, a bare-IP HTTP Host. `evidence` is their count. On the labeled captures every
+C2 had 2 or 3 and every benign beacon had 0. Destinations that beacon by design are skipped through `beacon_allow.txt`
+(NTP only; replace it with `--beacon-allow FILE`), and a destination contacted by many home hosts is treated as a
+shared service. Suppressions for beacons are keyed by host and peer.
+
+```bash
+python3 detect.py windows.csv hosts.csv connections.csv -o alerts.jsonl
+python3 beacons.py connections.csv --top 20     # every pair's scores, before the allowlist and filters
+```
 
 ## Connection log
 
@@ -365,16 +387,18 @@ Outputs go to `eval-runs/<dataset>/` (gitignored). A pcap that already has a `wi
 detector change is re-scored in seconds. `tools/eval/inject.py` builds the synthetic-attack capture by cutting a benign
 stretch of CTU-5 and merging in the attacks from `tools/eval/gen_attacks.py` (scapy, with a fixed seed). An alert
 matches a label when its host is one of the label's IPs and its window falls between 10 s before the label and 10 min
-after; windows with an alert that matches no label count as false alarms.
+after; windows with an alert that matches no label count as false alarms. A beacon alert must also name a label IP as
+its peer, and unmatched beacon alerts are counted as false-alarm pairs, apart from the window rate.
 
-| Capture | Detected | Missed | Windows with a false alarm |
-| - | - | - | - |
-| Synthetic attacks injected into real CTU-13 university traffic, suppressions learned from another day | fast and slow port scan, spoofed SYN flood, SSH brute force, 40 MB upload, each naming the right host within seconds | DNS tunnel, C2 beacon | 0% |
-| CTU-13 scenario 5 (Virut bot), suppressions learned from scenario 11 | the bot, 200 s after its activity starts | | 0.83% |
-| CTU-13 scenario 11 (Rbot ICMP DDoS) | the DDoS | IRC C2 setup | high: several busy background hosts were not seen in the 30-minute capture used for learning |
-| IoT-23 Mirai, 24 h | all 4 floods, and the bot's C2 connection attempts | | 0.03% |
-| DARPA 1999 week 5 Monday, 22 h | 10 of 26 labeled attacks: SYN flood, UDP storm, 2 apache2 DoS, 2 smurf, telnet password guessing, dictionary brute force, warezclient, selfping | exploits and other payload-level or few-packet attacks | 0.80% with no learning (92 of the 127 windows are a DNS storm from a misconfigured host that the dataset documents); 0.03% with suppressions learned from the 10 attack-free days of weeks 1 and 3, with the same 10 attacks detected |
-| DARPA 2000 LLDoS | the DDoS flood | sweep (seen only as router ARP), probe, exploit, trojan install | 0.9% |
+| Capture | Detected | Missed | Windows with a false alarm | False beacon pairs |
+| - | - | - | - | - |
+| Synthetic attacks injected into real CTU-13 university traffic, suppressions learned from another day | fast and slow port scan, spoofed SYN flood, SSH brute force, 40 MB upload, each naming the right host within seconds; the C2 beacon | DNS tunnel | 0% | 14 |
+| CTU-13 scenario 5 (Virut bot), suppressions learned from scenario 11 | the bot, 200 s after its activity starts | | 0.83% | 35 |
+| CTU-13 scenario 11 (Rbot ICMP DDoS) | the DDoS | IRC C2 setup | high: several busy background hosts were not seen in the 30-minute capture used for learning | 28 |
+| IoT-23 Mirai, 24 h | all 4 floods, and the bot's C2 connection attempts (as failed connections, not as a beacon) | | 0.03% | 0 |
+| DARPA 1999 week 5 Monday, 22 h | 10 of 26 labeled attacks: SYN flood, UDP storm, 2 apache2 DoS, 2 smurf, telnet password guessing, dictionary brute force, warezclient, selfping | exploits and other payload-level or few-packet attacks | 0.76% with no learning (most are a DNS storm from a misconfigured host that the dataset documents); 0.03% with suppressions learned from the 10 attack-free days of weeks 1 and 3, with the same 10 attacks detected | 2; and 14 over the 10 attack-free days |
+| DARPA 2000 LLDoS | the DDoS flood | sweep (seen only as router ARP), probe, exploit, trojan install | 0.43% | 0 |
+| Active Countermeasures Backoff and PoshC2 C2 beacons, 24 h and 1 h each | all 4 beacons, each naming the implant and its C2 | | 0% | 2 (Backoff), 4 (PoshC2), all with evidence 0 |
 
 ## What the window-summary approach is and isn't good for
 
@@ -408,16 +432,18 @@ In short: the time-window summary is a feature extractor, not a detector. The pe
 can be made to emit are where detection happens, and existing tools already emit those records from live traffic. Run
 this alongside Zeek, Suricata or RITA, not instead of them.
 
-**Where this goes next.** The project is being reframed around the connection log
-(`docs/plans/2026-11-06-connection-log.md`): one row per connection with addresses, ports, times, bytes, state and
-the TLS/HTTP handshake fields becomes the primary output, `windows.csv` and `hosts.csv` stay as they are, and the new
-detectors (beacons first, then host profiles, DNS, and possibly an LLM triage step) read connections. That plan has a
-written keep-or-archive test: if the beacon scorer does not beat the RITA reference where it falls short, or the log
-detects nothing the summaries did not, the project is archived and its lasting contribution is the evaluation harness
-in `tools/eval/`: registered public captures, label files, synthetic-attack injection and a scorer, which did not
-exist in reusable form before. The earlier plan for beacons, host profiles, TLS/HTTP facts, DNS tunnelling,
-hour-of-day baselines and LLM triage, with the investigation results that scoped it, is in
-`docs/plans/2026-11-05-deferred-detection.md`.
+**Where this went.** The project was reframed around a connection log (`-oc connections.csv`,
+`docs/plans/2026-11-06-connection-log.md`): one row per connection with addresses, ports, times, bytes, state and the
+TLS/HTTP handshake fields, with a beacon scorer reading it. The plan set a keep-or-archive test in advance. The log did
+detect what the summaries could not: all four labeled C2 beacons in the Active Countermeasures captures and the
+injected beacon. The scorer ranked the PoshC2 C2 first where RITA's formula ranks it 18th, but not the IoT-23 Mirai C2.
+On the university captures it raised 14 to 35 benign beacon pairs (BitTorrent peers, web and ad polling) against a
+limit of 5, and on the DARPA attack-free days 14 in 10 days. Timing alone finds beacons, but most beacons on a real
+network are benign; the TLS/HTTP evidence separated every C2 from them, and that needs full packets and is already
+what Zeek with RITA or AC-Hunter provides. The project was archived on that result. Its reusable parts are the
+evaluation harness in `tools/eval/` (registered public captures, label files, synthetic-attack injection, a scorer and
+a RITA-formula reference) and the connection log as a feature extractor. The host-profile, DNS and LLM-triage steps
+that were planned next are written up but were not started.
 
 # performance
 This progam makes use of 5 cores, 4 for python Python and one for tshark.  

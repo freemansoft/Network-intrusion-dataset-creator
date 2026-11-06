@@ -60,9 +60,13 @@ def kind_matches(kind, kinds):
 def matches(alert, label, window_after_msec):
     t = alert["window_start_time"]
     in_time = label["start"] - 10_000 <= t <= label["end"] + window_after_msec
+    # an alert naming a peer (beacons) must name one of the label's addresses there too, or a
+    # benign beacon from the infected host would be credited with finding the C2
+    peer = alert.get("peer", "").rsplit(":", 1)[0]
     return (
         in_time
         and (not label["ips"] or alert["host"] in label["ips"])
+        and (not peer or not label["ips"] or peer in label["ips"])
         and kind_matches(alert["kind"], label["kinds"])
     )
 
@@ -88,15 +92,23 @@ def score(alerts_path, labels_path, windows_paths, window_after=600):
         else:
             lines.append(f"{label['name']:24s} NO")
     unmatched = [a for a in alerts if not any(matches(a, l, after) for l in labels)]
-    fa_windows = {a["window_start_time"] for a in unmatched}
+    # beacon alerts (they name a peer) are one per pair over the whole capture, not per window, so
+    # they are counted as pairs and kept out of the window rate
+    fa_windows = {a["window_start_time"] for a in unmatched if "peer" not in a}
+    fa_peers = sorted(
+        (-a.get("evidence", 0), a["host"], a["peer"]) for a in unmatched if "peer" in a
+    )
     rate = len(fa_windows) / n_windows if n_windows else 0.0
     lines.append("")
     lines.append(
         f"labels detected={detected}/{len(labels)} alerts={len(alerts)} unmatched={len(unmatched)} "
-        f"false-alarm windows={len(fa_windows)}/{n_windows} = {rate:.2%}"
+        f"false-alarm windows={len(fa_windows)}/{n_windows} = {rate:.2%} "
+        f"false-alarm beacon pairs={len(fa_peers)} "
+        f"(with evidence: {sum(1 for e, _, _ in fa_peers if e < 0)})"
     )
     for (kind, host), n in Counter(
-        (a["kind"], a["host"]) for a in unmatched
+        (a["kind"], a["host"] + (" -> " + a["peer"] if "peer" in a else ""))
+        for a in unmatched
     ).most_common(12):
         lines.append(f"  {n:5d}  {kind:22s} {host}")
     summary = {
@@ -107,6 +119,10 @@ def score(alerts_path, labels_path, windows_paths, window_after=600):
         "false_alarm_windows": len(fa_windows),
         "windows": n_windows,
         "false_alarm_rate": rate,
+        "false_alarm_beacon_pairs": len(fa_peers),
+        "false_alarm_beacon_pairs_with_evidence": sum(
+            1 for e, _, _ in fa_peers if e < 0
+        ),
     }
     return "\n".join(lines), summary
 

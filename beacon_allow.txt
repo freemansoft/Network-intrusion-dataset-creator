@@ -1,0 +1,7 @@
+# Destinations that beacon by design, skipped by the beacon scorer (beacons.py).
+# One entry per line: proto/port (tcp/443 is NOT a good entry) or a CIDR. '#' starts a comment.
+# Every entry is a blind spot: C2 sent to a listed port or network is never reported as a beacon.
+# Keep this list short and give the reason and source for each entry.
+# detect.py --beacon-allow FILE replaces this file (use /dev/null for no allowlist).
+
+udp/123  # NTP: clients poll their time servers at a fixed interval by design (RFC 5905 section 7.3)

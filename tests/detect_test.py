@@ -225,7 +225,7 @@ def test_learned_suppression_drops_known_noisy_host_unless_it_escalates():
         alert_at("failed_connections", "10.0.0.118", v) for v in (150, 600, 400)
     ]
     peaks = detect.learn_suppressions(baseline)
-    assert peaks == {("failed_connections", "10.0.0.118"): 600}
+    assert peaks == {("failed_connections", "10.0.0.118", ""): 600}
     later = [
         alert_at("failed_connections", "10.0.0.118", 550),  # usual for this host
         alert_at(
@@ -251,7 +251,7 @@ def test_learning_skips_known_incident_hosts_and_later_windows():
     peaks = detect.learn_suppressions(
         alerts, until_msec=T0 + 50 * STEP, exclude_hosts={"10.0.0.66"}
     )
-    assert set(peaks) == {("login_bruteforce", "10.0.0.7")}
+    assert set(peaks) == {("login_bruteforce", "10.0.0.7", "")}
 
 
 def test_dict_observed_values_use_their_first_number():
