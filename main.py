@@ -116,6 +116,20 @@ def main():
         action="store",
     )
     parser.add_argument(
+        "-oc",
+        "--connfile",
+        default=None,
+        help="also write one row per connection to this CSV [off]",
+        action="store",
+    )
+    parser.add_argument(
+        "--conn-scope",
+        default="home",
+        choices=("home", "all"),
+        help="connections written: with a home address on either side, or all [home]",
+        action="store",
+    )
+    parser.add_argument(
         "--home-net",
         default=",".join(DEFAULT_HOME_NET),
         help="comma-separated CIDRs treated as home (inside) addresses ["
@@ -215,6 +229,8 @@ def main():
         host_topk=args.host_topk,
         novelty_horizon_msec=args.novelty_horizon * 1000,
         labels=labels,
+        conn_file_path=args.connfile,
+        conn_scope=args.conn_scope,
     )
     time_c_p = mp.Process(target=time_counts.run)
     time_c_p.start()

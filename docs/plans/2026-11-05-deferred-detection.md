@@ -7,8 +7,8 @@ in the phase sections. This plan covers the items deferred from `docs/plans/2026
 **Superseded on 2026-11-06.** The investigations showed that phases 1-3 each need per-connection records (contact
 times per destination, destination sets over days, TLS/HTTP handshake fields) that a window summary cannot hold, so
 the project is being reframed around a connection log as the primary output (README, "What the window-summary
-approach is and isn't good for"). The phase sections below remain the record of what was learned and the acceptance
-criteria carry over to whatever reads the connection log.
+approach is and isn't good for"; plan: `docs/plans/2026-11-06-connection-log.md`). The phase sections below remain
+the record of what was learned and the acceptance criteria carry over to the steps of that plan.
 
 ## Why
 

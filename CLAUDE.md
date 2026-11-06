@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+The project is archived (2026-11-06) and kept for information only: the keep-or-archive test in
+`docs/plans/2026-11-06-connection-log.md` came out as archive. Don't start the unstarted steps 3-5 of that plan
+unless asked.
+
 ## Commands
 
 ```bash
@@ -16,14 +20,18 @@ python3 main.py -i eth0 -l 120 -wt 5000
 
 # Per-host rows, home network, labels; then the offline detector
 python3 main.py -s capture.pcap -wt 5000 -o windows.csv -oh hosts.csv --home-net 10.0.0.0/8 --labels labels.csv
+python3 main.py -s capture.pcap -wt 5000 -o windows.csv -oc connections.csv   # plus one row per connection
 python3 detect.py windows.csv hosts.csv -o alerts.jsonl --incidents incidents.jsonl [--set name=value]
 python3 detect.py day1-windows.csv day1-hosts.csv day2-windows.csv day2-hosts.csv -o alerts.jsonl  # consecutive captures as one run
+python3 detect.py windows.csv hosts.csv connections.csv -o alerts.jsonl [--beacon-allow FILE]     # adds beacon alerts
+python3 beacons.py connections.csv --top 20      # beacon scores per pair, before allowlist and filters
 
 # Evaluate against the labeled captures in datasets/ (outputs in eval-runs/, gitignored)
 python3 tools/eval/run.py --list
 python3 tools/eval/run.py darpa99 [--suppress supp.csv] [--set name=value]
 python3 tools/eval/run.py darpa-attackfree --learn-suppressions supp.csv
 python3 tools/eval/run.py injected --python /path/to/python-with-scapy   # builds the injected pcap first
+sh tools/eval/reference/run.sh                  # RITA-formula beacon ranks, the bar for our scorer (needs zeek)
 
 # Tests (pipeline_test.py runs main.py on tests/fixtures/*.pcap and is skipped without tshark)
 python3 -m pytest
@@ -37,7 +45,7 @@ python3 tests/fixtures/make_fixtures.py
 - Code is formatted with `black`. There is no linter config.
 - `*.pcap`, `*.pcapng`, `*.cap`, `*.csv` and `*.log` are gitignored. The sample captures in the repo root exist only locally (more are at https://wiki.wireshark.org/SampleCaptures); `sample_output/*.csv` is the only committed output. `tests/fixtures/*.pcap` is un-ignored explicitly.
 - `datasets/` holds downloaded labeled intrusion captures and is gitignored. `datasets/SOURCES.md` (committed) records each file's URL, SHA-256, label source and attack intervals.
-- `tools/eval/` is the evaluation harness: `datasets.yaml` names each capture's pcaps, home net and label file (`labels/*.csv`, columns `label,start,end,ips`); `run.py` captures, detects and scores; `score.py` matches alerts to labels by host and time; `inject.py` and `gen_attacks.py` (scapy) build the synthetic-attack capture. There is no live traffic: the captures are the only development and test data, so every detector change is judged by `run.py` on them.
+- `tools/eval/` is the evaluation harness: `datasets.yaml` names each capture's pcaps, home net and label file (`labels/*.csv`, columns `label,start,end,ips`); `run.py` captures, detects and scores; `score.py` matches alerts to labels by host and time; `inject.py` and `gen_attacks.py` (scapy) build the synthetic-attack capture. `reference/` reimplements RITA's beacon score on Zeek's `conn.log` as a comparison baseline only; nothing else depends on it or on Zeek. There is no live traffic: the captures are the only development and test data, so every detector change is judged by `run.py` on them.
 
 ## Architecture
 
@@ -55,7 +63,9 @@ tshark -T ek ─pipe─> PacketCapture ─sharedQ─> PacketAnalyse ─serviceQ�
 - **Protocol detection** (`detectors.py`). `find_ip` tries `find_icmp` (ICMP and ICMPv6) and `find_ip_fragment` first, then `find_tcp`, `find_udp` and `find_igmp` (IPv4 only). The order matters: ICMP errors carry quoted TCP/UDP ports, and non-final fragments have an IP protocol number but no transport header (tshark attaches the reassembled datagram to the final fragment, which is counted under its own protocol). Anything that isn't IP goes to `find_non_ip`, which handles only ARP. Unrecognized packets are dropped but counted in `dvar.datasetSummary` (including the set of unanalyzed IP protocol numbers), which is logged once at exit and not written anywhere else.
 - **Service detection** (`services.py`). Services are identified by the presence of a field or port. One packet can match several services (for example, SSDP is also counted as HTTP).
 - **Per-host state** (`hoststats.py`). Each window owns a `WindowHosts` (`cvar.windowcounts.host_window`) that `analyze_update_window` feeds every packet. It produces the fan-out/entropy columns of `windows.csv` and the rows of `hosts.csv`. Cross-window novelty ("contacted for the first time within the horizon") lives in `Novelty` on `TimesAndCounts`. "Contacted" means contact the host initiated (TCP SYN, UDP to a port below 1024, ICMP echo request, ARP request); keep that rule when adding per-host columns, or servers and scan victims look like scanners.
+- **Connection log** (`connections.py`). `ConnectionTable` on `TimesAndCounts` gets every packet after `WindowHosts` and writes a row to `connections.csv` (`-oc`) when the connection ends (FIN/RST plus linger, or idle), so rows don't depend on window boundaries; `sweep()` at each window flush only frees memory. Columns are `connections.CONN_FIELDNAMES`; states use Zeek's `conn_state` names. TLS/HTTP fields are looked up by `unwrap`'s mangled names (`tls.handshake_extensions_server_name`, `tls.handshake_ja3`, `http.user_agent`, `x509af.*`). tshark repeats `x509af_utcTime` in one JSON object, so `capture.keep_duplicate_times` keeps both under `x509af.utcTime_all`, for lines containing that key only.
 - **Detector** (`detect.py`). Offline and stdlib-only: reads `windows.csv` and `hosts.csv` in time order and writes JSONL alerts. Thresholds live in `detect.THRESHOLDS`. Plan, rationale and acceptance criteria: `docs/plans/2026-11-05-per-host-detector.md`.
+- **Beacons** (`beacons.py`). `detect.py` recognizes `connections.csv` files by header and scores each file separately (one file is one recording). Thresholds are `beacons.DEFAULTS`, merged into `detect.THRESHOLDS`. Retries are collapsed only after unanswered (`S0`/`REJ`) attempts, so answered bursts stay separate and fail the minimum gap. `beacon_allow.txt` holds only by-design beaconers (NTP); every entry is a blind spot. Beacon alerts carry `peer`, and suppressions and incidents are keyed by (kind, host, peer). `tools/eval/score.py` credits a beacon only if its peer is in the label's IPs, and counts unmatched beacons as false-alarm pairs rather than windows.
 - **Windowing.** `tumblingwindow.TumblingWindow` decides window boundaries. Windows are non-overlapping and bounded by time (msec), packet count, or both; the window start is inclusive and the end is exclusive. `counts.py` flushes empty windows when time jumps forward past them.
 
 ### Adding a CSV column

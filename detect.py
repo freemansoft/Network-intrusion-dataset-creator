@@ -4,7 +4,8 @@
     python3 detect.py windows.csv hosts.csv -o alerts.jsonl --incidents incidents.jsonl
     python3 detect.py day1-windows.csv day1-hosts.csv day2-windows.csv day2-hosts.csv ...
 
-Reads windows.csv (-o) and hosts.csv (-oh) from main.py and writes one JSON alert per line.
+Reads windows.csv (-o), hosts.csv (-oh) and connections.csv (-oc) from main.py and writes one
+JSON alert per line.
 Several captures of the same network (one per day) can be given together, in any order: the
 files are told apart by their header and read in time order as one run, so the trailing
 baselines and suppression learning span all of them. Three layers:
@@ -18,9 +19,12 @@ baselines and suppression learning span all of them. Three layers:
    column alerts after two consecutive anomalous windows (or one extreme window), and only for a material change (a
    minimum number of packets or bytes above the baseline), so near-silent networks stay quiet. No baseline is imported from another
    capture: across captures, normal levels differed by 20x.
+4. Beacons (beacons.py), when connections CSVs are given: pairs of home host and external
+   destination contacted at a steady period, scored at end of input, each file on its own. Each alert names the
+   destination in `peer` and counts odd TLS/HTTP facts in `evidence`.
 
 Hosts that behave the same way all the time (a scanner you run, a busy resolver, a P2P client)
-alert on every window. --learn-suppressions records the (kind, host) pairs that alert on a clean
+alert on every window. --learn-suppressions records the (kind, host, peer) keys that alert on a clean
 capture of the same network; --suppress drops those later unless the value reaches
 suppress_escalation times the learned peak.
 
@@ -37,6 +41,8 @@ import statistics
 import sys
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+
+import beacons
 
 THRESHOLDS = {
     # window rules
@@ -69,6 +75,8 @@ THRESHOLDS = {
     "incident_gap_sec": 120,
     # learned suppressions still alert when the value reaches this multiple of the learned peak
     "suppress_escalation": 3.0,
+    # beacons (beacons.py): retry merging, qualification, alert thresholds, popularity filter
+    **beacons.DEFAULTS,
 }
 
 VOLUME_COLUMNS = [
@@ -352,22 +360,27 @@ def read_rows(paths):
 
 
 def classify_inputs(paths):
-    """Split main.py output files into windows CSVs and hosts CSVs by their header, each list
-    ordered by its first window start, so several days can be given in any order."""
-    kinds = {"windows": [], "hosts": []}
+    """Split main.py output files into windows, hosts and connections CSVs by their header, each
+    list ordered by its first start time, so several days can be given in any order."""
+    kinds = {"windows": [], "hosts": [], "connections": []}
     for path in paths:
         with open(path, newline="") as f:
             reader = csv.reader(f)
             header = next(reader, [])
             first = next(reader, None)
-        kind = "hosts" if "host" in header else "windows"
+        if "host" in header:
+            kind, time_column = "hosts", "window_start_time"
+        elif "state" in header and "start_msec" in header:
+            kind, time_column = "connections", "start_msec"
+        else:
+            kind, time_column = "windows", "window_start_time"
         start = float("inf")
-        if first and "window_start_time" in header:
-            start = float(first[header.index("window_start_time")])
+        if first and time_column in header:
+            start = float(first[header.index(time_column)])
         kinds[kind].append((start, path))
-    return (
-        [path for _, path in sorted(kinds["windows"])],
-        [path for _, path in sorted(kinds["hosts"])],
+    return tuple(
+        [path for _, path in sorted(kinds[kind])]
+        for kind in ("windows", "hosts", "connections")
     )
 
 
@@ -392,11 +405,11 @@ def detect(windows_path, hosts_path, t):
 
 
 def incidents(alerts, gap_sec):
-    """Merge alerts with the same kind and host that are within gap_sec of each other."""
+    """Merge alerts with the same kind, host and peer that are within gap_sec of each other."""
     merged = {}
     out = []
     for a in sorted(alerts, key=lambda a: a["window_start_time"]):
-        key = (a["kind"], a["host"])
+        key = suppression_key(a)
         current = merged.get(key)
         if (
             current
@@ -408,6 +421,7 @@ def incidents(alerts, gap_sec):
             current = merged[key] = {
                 "kind": a["kind"],
                 "host": a["host"],
+                **({"peer": a["peer"]} if "peer" in a else {}),
                 "first_window": a["window_start_time"],
                 "last_window": a["window_start_time"],
                 "first": a["ts_start"],
@@ -425,8 +439,13 @@ def scalar(observed):
     return float(observed)
 
 
+def suppression_key(a):
+    """(kind, host, peer); peer is empty for alerts that do not name one."""
+    return (a["kind"], a["host"], a.get("peer", ""))
+
+
 def learn_suppressions(alerts, until_msec=None, exclude_hosts=()):
-    """Peak observed value per (kind, host) among alerts before until_msec.
+    """Peak observed value per (kind, host, peer) among alerts before until_msec.
 
     exclude_hosts: hosts known to be involved in incidents during the learning capture, so their
     alerts are not learned as normal.
@@ -437,7 +456,7 @@ def learn_suppressions(alerts, until_msec=None, exclude_hosts=()):
             continue
         if a["host"] in exclude_hosts:
             continue
-        key = (a["kind"], a["host"])
+        key = suppression_key(a)
         peaks[key] = max(peaks.get(key, 0.0), scalar(a["observed"]))
     return peaks
 
@@ -445,20 +464,24 @@ def learn_suppressions(alerts, until_msec=None, exclude_hosts=()):
 def write_suppressions(path, peaks):
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["kind", "host", "peak"])
-        for (kind, host), peak in sorted(peaks.items()):
-            writer.writerow([kind, host, peak])
+        writer.writerow(["kind", "host", "peer", "peak"])
+        for (kind, host, peer), peak in sorted(peaks.items()):
+            writer.writerow([kind, host, peer, peak])
 
 
 def read_suppressions(path):
-    return {(row["kind"], row["host"]): float(row["peak"]) for row in read_rows(path)}
+    """Suppression file; files written before the peer column have an empty peer."""
+    return {
+        (row["kind"], row["host"], row.get("peer") or ""): float(row["peak"])
+        for row in read_rows(path)
+    }
 
 
 def apply_suppressions(alerts, peaks, escalation):
-    """Drop alerts for known-noisy (kind, host) pairs unless they escalate past the learned peak."""
+    """Drop alerts for known-noisy (kind, host, peer) keys unless they escalate past the learned peak."""
     kept = []
     for a in alerts:
-        peak = peaks.get((a["kind"], a["host"]))
+        peak = peaks.get(suppression_key(a))
         if peak is None or scalar(a["observed"]) >= escalation * peak:
             kept.append(a)
     return kept
@@ -504,6 +527,12 @@ def main(argv=None):
         metavar="FILE",
         help="suppression file learned from a clean capture of the same network",
     )
+    parser.add_argument(
+        "--beacon-allow",
+        metavar="FILE",
+        default=beacons.ALLOW_FILE,
+        help="beacon allowlist, replacing the shipped beacon_allow.txt (/dev/null for none)",
+    )
     args = parser.parse_args(argv)
 
     t = dict(THRESHOLDS)
@@ -513,10 +542,17 @@ def main(argv=None):
             parser.error(f"unknown threshold {name}; known: {', '.join(t)}")
         t[name] = float(value)
 
-    windows, hosts = classify_inputs(args.inputs)
+    windows, hosts, connections = classify_inputs(args.inputs)
     if not windows:
         parser.error("no windows CSV among the inputs")
     alerts = detect(windows, hosts, t)
+    if connections:
+        # each connections file is one recording: scored on its own so the time between two
+        # captures (days, for some datasets) does not count as a gap in every beacon
+        allowlist = beacons.load_allowlist(args.beacon_allow)
+        for path in connections:
+            alerts += beacons.beacon_alerts(read_rows(path), t, allowlist)
+        alerts.sort(key=lambda a: a["window_start_time"])
     if args.learn_suppressions:
         until = args.learn_until * 1000 if args.learn_until else None
         exclude = {h.strip() for h in args.learn_exclude.split(",") if h.strip()}
