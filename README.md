@@ -330,6 +330,8 @@ The captures are described in `datasets/SOURCES.md`.
 
 This approach cannot see payloads, so exploits, web attacks, DNS tunnels and C2 inside normal TLS stay invisible, as does
 anything a host does at a rate below its own normal. Run it alongside Zeek, Suricata or RITA, not instead of them.
+Planned next steps (beacon detection, DNS tunnelling, hour-of-day baselines, LLM triage of incidents) are in
+`docs/plans/2026-11-05-deferred-detection.md`.
 
 # performance
 This progam makes use of 5 cores, 4 for python Python and one for tshark.  
