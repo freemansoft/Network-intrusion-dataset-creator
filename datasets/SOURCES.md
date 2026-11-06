@@ -16,6 +16,8 @@ labeled attacker/victim packets in the pcap (see each section).
 | `ctu13-scenario11-rbot-icmp-ddos/` | full router capture, headers only, 16 min | IRC botnet C2 + volumetric ICMP DDoS | Yes, real university traffic |
 | `ctu13-scenario5-virut/` | full router capture, headers only, 30 min | botnet C2 (HTTP/IRC), spam, proxying | Yes, real university traffic |
 | `iot23-34-1-mirai/` | single infected IoT device, 24 h | Mirai C2 beaconing, TCP/UDP floods (DDoS), "port scan" | Only the device's own NTP/DNS (no other hosts) |
+| `darpa1999-attackfree-weeks1-3/` | inside tcpdump, 10 days of about 22 h | none (benign baseline for the week 5 network) | Benign only |
+| `acm-backoff/`, `acm-poshc2/` | one lab host each, 24 h + 1 h per implant | C2 beacons (Cobalt Strike 30 s, PoshC2 120 s) | Yes, that host's normal Windows traffic |
 
 **Not covered:** exfiltration and worm propagation (see "Tried and skipped" at the end).
 
@@ -299,6 +301,86 @@ is no timezone ambiguity. Filenames and the README are CET (UTC+1).
   vertical/flood behaviour, not a horizontal scan. Treat it as an attack burst whose label type is unreliable.
 - DDoS burst 1 is mostly Zeek `OTH` flows with `orig_pkts=0`, so packet counts from the conn.log are wrong (0). Use the pcap.
 - The only labeled source is the single device.
+
+---
+
+## 6. DARPA 1999 IDEVAL, training weeks 1 and 3 (attack-free), inside sniffer
+
+- **Purpose:** long benign baseline for the network in section 1. Learn suppressions here, then test week 5 without
+  using any of its own traffic for learning.
+- **Citation, terms, network:** as section 1. Lippmann et al. (2000) describe training weeks 1 and 3 as containing no
+  attacks (week 2 has labeled attacks and was not downloaded). There are no label files for these weeks; "attack-free" is
+  the dataset's own claim.
+- **Landing page:** https://archive.ll.mit.edu/ideval/data/1999/training/ (direct URLs below follow the pattern
+  `training/week<N>/<day>/inside.tcpdump.gz`).
+- **Clock:** 13:00 UTC start = 08:00 EST. US daylight saving began 1999-04-04, so these weeks are EST (UTC-5), while
+  week 5 is EDT (UTC-4).
+- Downloaded 2026-11-05. Classic pcap, Ethernet. Only the inside captures were downloaded (week 5 tests use inside).
+
+| Local path (`darpa1999-attackfree-weeks1-3/`) | Archive size (bytes) | Archive SHA-256 | pcap size (bytes) | Packets | Span (UTC epoch) |
+| --- | --- | --- | --- | --- | --- |
+| `w1-monday-inside.pcap` | 165,263,838 | `9b81f06fd5f91cd2b2ef3ca87d14e1daccd341fc3315404f6d8711d6c50fcf7a` | 341,027,537 | 1,492,331 | 920293205.93-920372416.19 |
+| `w1-tuesday-inside.pcap` | 163,009,266 | `538950e2bcd6ba967de1f98341a26e65f0830963bd9148669b8dc8013dd29f84` | 341,401,548 | 1,237,119 | 920379601.48-920458797.32 |
+| `w1-wednesday-inside.pcap` | 186,630,999 | `b6e97edf74338c0be570af015c4675386bf5600e039b7b916999917f6c28ec8d` | 385,142,370 | 1,726,319 | 920466001.47-920545198.38 |
+| `w1-thursday-inside.pcap` | 267,903,950 | `601289fbb5a198258100961f026750d4b33346196d5ec3837242b3737c0fe5d4` | 552,903,806 | 1,947,815 | 920552401.54-920631592.15 |
+| `w1-friday-inside.pcap` | 150,300,568 | `545c74dc31ad16c90db043e41cb638b620c3512c5ccbd86076df783b0a29307c` | 308,604,831 | 1,483,419 | 920638801.32-920717998.69 |
+| `w3-monday-inside.pcap` | 213,813,829 | `232d1abcdf60795e8d67ab7ab340c4e49b0a7d5916efa72c1fa14b8919cb7bca` | 468,024,334 | 2,106,744 | 921502801.53-921581998.23 |
+| `w3-tuesday-inside.pcap` | 190,597,150 | `4f1ba4e085b8fbc3bad86aacb783bcbcd7109688f001f303eacbd42c9e406021` | 414,885,615 | 1,831,648 | 921589200.27-921668395.75 |
+| `w3-wednesday-inside.pcap` | 268,698,555 | `16fcecab1f45967ef701933f7fcac458c9c11dec9abb8ae3d66c6831c185ce50` | 558,991,635 | 1,849,753 | 921675601.51-921754798.05 |
+| `w3-thursday-inside.pcap` | 87,248,922 | `03837b60ae2944e1ea30b0f719fec0c0d94ce9045d5370c232444bebb4609db8` | 260,180,866 | 1,559,156 | 921762003.06-921834702.98 |
+| `w3-friday-inside.pcap` | 260,074,565 | `7e683fbc78115d415bdf1c7a40f08c53ab3271bc82a2f2f58b2465f17c9ad527` | 513,197,145 | 1,635,425 | 921848402.28-921909741.24 |
+
+Week 1 starts 1999-03-01 13:00 UTC and week 3 starts 1999-03-15 13:00 UTC. Most days run about 22 h (08:00 to 06:00
+local). Week 3 Thursday (20.2 h) and Friday (17 h) end early.
+
+---
+
+## 7. Active Countermeasures "Malware of the Day": C2 beacon lab captures
+
+- **Purpose:** ground truth for beacon detection (plan phase 1). Each capture is one lab host running a C2 implant on a
+  known schedule, alongside that host's normal Windows traffic and the lab LAN's broadcasts.
+- **Publisher:** Active Countermeasures (makers of RITA and AC-Hunter). The posts say the captures contain no actual
+  malware binaries.
+- **Pages:**
+  - Backoff: https://www.activecountermeasures.com/malware-of-the-day-backoff/ (Cobalt Strike over HTTP, posted
+    as a 30 s beacon with 10% jitter)
+  - PoshC2: https://www.activecountermeasures.com/malware-of-the-day-who-started-this-threat-hunting-meets-siem/
+    (PoshC2 over HTTPS, posted as 120 s with no jitter)
+- **How obtained:** the site blocks automated clients (Cloudflare 403), so the files were downloaded by hand in a
+  browser on 2026-11-05 from the Dropbox links on those pages. The direct links, the publisher's checksums and any terms
+  of use were not recorded because the pages could not be read here. Compare the hashes below with the ones on the pages
+  before relying on them.
+- The PoshC2 24-hour capture starts 36 s after the 1-hour capture ends, so together they are 25 continuous hours of
+  the same host.
+
+| Local path | Size (bytes) | SHA-256 | MD5 | Packets | Span (UTC epoch) | Span (UTC) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `acm-backoff/backoff_24hr.pcap` | 46,120,726 | `4640578043e7f0ff898ab92ebf9bf850d53068fbcf97594159a494f805210741` | `164c9cd540d7f09a7ce0492c2d1fa7c8` | 175,479 | 1598035219.19-1598121618.26 (86,399 s) | 2020-08-21 18:40 to 08-22 18:40 |
+| `acm-backoff/backoff_1hr.pcap` | 1,442,401 | `e4c51eadde0d9e0d5b2779dc96350fe8ac4da36bd1dc599dea856a26201be5b9` | `360fdd42ad66ef5b02168235befe89de` | 6,744 | 1598282719.63-1598286317.47 (3,598 s) | 2020-08-24 15:25 to 16:25 |
+| `acm-poshc2/posh_stealthy_24hr.pcap` | 104,643,548 | `a46699496e3bd0e6d274d37cbf39d6ea67758bae7109f8b3603c8b1b3b7a2b06` | `c5a423c253895ceb500e74ea0f0112dd` | 268,655 | 1617427114.48-1617513291.30 (86,177 s) | 2021-04-03 05:18 to 04-04 05:14 |
+| `acm-poshc2/posh_stealthy_1hr.pcap` | 5,827,520 | `4456b3127223d2cea3b7281341375250a0a0ba737dc7f9c23f88a462a4066ddd` | `924444bc091e925859d704e502728cd0` | 14,034 | 1617423969.93-1617427078.22 (3,108 s) | 2021-04-03 04:26 to 05:17 |
+
+The Backoff files are classic pcap and the PoshC2 files are pcapng, all Ethernet.
+
+**Ground truth.** The posts don't name the IPs. The beacon pairs below were found in the pcaps by grouping TCP SYNs by
+source, destination and port, and they match the posted schedules:
+
+| Capture | Implant host | Beacon destination | Connections | Median gap | MAD of gaps |
+| --- | --- | --- | --- | --- | --- |
+| Backoff 24 h | 192.168.99.55 | 157.245.128.27:80 | 3,020 | 28.6 s | 0.8 s |
+| PoshC2 24 h | 10.0.0.62 | 157.230.93.100:443 | 726 | 120.2 s | 0.0 s |
+| PoshC2 1 h | 10.0.0.62 | 157.230.93.100:443 | 31 | 120.2 s | 0.0 s |
+
+**Benign beacons in the same captures (false-positive tests):**
+- In Backoff 24 h, 192.168.99.55 also connects to 52.184.216.174:443 and 52.184.216.246:443 (Microsoft Azure address
+  space) 87-89 times each, every 900.2 s with MAD 0. These are more regular than the real beacon, so timing regularity
+  alone ranks them above it.
+- In PoshC2 24 h, 10.0.0.62 connects to four other :443 destinations (68.64.13.6, 68.64.25.254, 173.199.15.254,
+  78.108.118.250) 160-161 times each with a median gap of 2.1 s and MAD 0. These are bursts of connections 2.1 s apart,
+  not a schedule. A scorer that uses only the median and MAD of gaps flags them, so it also needs a coverage or
+  burst check.
+- Each capture also has one busy, long-lived session that has no SYNs in the capture: Backoff to 167.71.97.235 and
+  PoshC2 to 167.172.239.22. What these sessions are is not known. Don't label them either way.
 
 ---
 

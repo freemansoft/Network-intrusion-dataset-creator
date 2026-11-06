@@ -27,7 +27,7 @@ process or queue.
 One row per (window, host) for home hosts (`--home-net`, default RFC 1918 + fc00::/7) that sent or received traffic,
 plus the top `--host-topk` (default 20) external hosts by fan-out and packets.
 
-Columns: `window_start_time`, `window_end_time`, `host`, `is_home`, `pkts_out`, `pkts_in`, `bytes_out`, `bytes_in`,
+Columns: `window_start_time`, `window_end_time`, `host`, `is_home`, `phttps://www.activecountermeasures.com/malware-of-the-day-backoff/kts_out`, `pkts_in`, `bytes_out`, `bytes_in`,
 `upload_bytes_ext` and `download_bytes_ext` (client-side transfer with non-home addresses: the host's port is the higher
 one, so a server's responses are not counted as uploads), `contacted_ips`, `contacted_ports`, `contacting_ips`,
 `new_contacted_ips` and `new_contacted_ports` (not contacted by this host within `--novelty-horizon`, default 600 s),
@@ -66,7 +66,7 @@ between two high ports (replies, P2P) floods the novelty counts.
 
 ## Deferred
 
-Planned in `docs/plans/2026-11-05-deferred-detection.md`, together with collecting a long baseline of one network.
+Planned in `docs/plans/2026-11-05-deferred-detection.md`, validated on public captures only.
 
 - C2 beaconing (needs per-destination contact timing; consider a contacts output or RITA).
 - DNS tunnelling (needs payload; the CTU captures are header-only).
