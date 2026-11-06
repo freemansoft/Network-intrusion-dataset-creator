@@ -8,17 +8,16 @@ The per-host detector catches scans, floods, brute force and bulk uploads, and n
 beacons and DNS tunnels: the injected beacon, the injected DNS tunnel and the CTU-11 C2 bootstrap all went undetected.
 Per-window totals throw away the per-destination timing and the query names that reveal those attacks.
 
-**Everything here is built, tuned and validated on public captures only.** No traffic from the network where the tool
-will run is used, and none is assumed. The target is a small office network (fewer than 10 hosts), which has three
-consequences:
+**Everything here is built, tuned and validated on public captures only.** No live traffic is available to us, so the
+captures in `datasets/` are both the development data and the test data. The tool is meant for networks in general,
+from a single host (IoT-23, Active Countermeasures) to a university router (CTU-13). Two consequences:
 
-- **Thresholds and allowlists ship with the tool.** They must work without site-specific learning. Learned suppressions
-  stay an optional feature. They are evaluated only within a dataset: learn on that network's attack-free capture, then
-  test on its attack capture.
-- **Filters based on many hosts are weak.** With fewer than 10 hosts, "many hosts use this destination" rarely
-  triggers, so destination allowlists and per-pair evidence carry more weight.
-- **Few hosts per capture.** Single-host and small-LAN captures (IoT-23, Active Countermeasures, CTU-Normal) resemble
-  the target more closely than the CTU-13 university captures do.
+- **Thresholds and allowlists ship with the tool.** They must work on every capture without site-specific tuning.
+  Learned suppressions stay an optional feature, evaluated only within a dataset: learn on that network's attack-free
+  capture, then test on its attack capture (DARPA weeks 1 and 3, then week 5).
+- **Every control is tested on both small and large captures.** A filter that only helps on a busy network (the
+  popularity filter) and one that only helps on a quiet one (the allowlist) are both kept, and the acceptance criteria
+  say which capture exercises which.
 
 All datasets are recorded in `datasets/SOURCES.md`.
 
@@ -39,9 +38,9 @@ All datasets are recorded in `datasets/SOURCES.md`.
   - running `main.py` and `detect.py`
   - scoring alerts against label files (host and time match, false-alarm windows)
   - a `labels/` directory with the label CSVs for each dataset in `SOURCES.md`
-- **Inject into small, benign captures.** Use DARPA week 1, a CTU-Normal capture and the attack-free parts of the
-  Active Countermeasures captures, not only the CTU-13 university traffic. That checks the existing rules on networks
-  closer to the target.
+- **Inject into more than one benign capture.** Use DARPA week 1 (a LAN with many hosts) and the attack-free parts of
+  the Active Countermeasures captures (one host), as well as the CTU-13 university traffic. That checks the existing
+  rules at three network sizes.
 - **Within-dataset learning test.** Learn suppressions from DARPA weeks 1 and 3, apply them to week 5, and report the
   false-alarm rate with and without them. Week 5 currently stands at 0.80% with no suppressions; the target is 0.5%.
 
@@ -93,13 +92,14 @@ median and MAD of the gaps.
 - Alert as `beacon` when the mean score is at least `beacon_score` (default 0.8, provisional) and coverage is at least
   `beacon_min_coverage` (default 0.6).
 - Each alert names `host` = src, a new `peer` field = `dst:dport`, the period, the contact count and each score.
-- **False-alarm controls for a small office:**
+- **False-alarm controls:**
   - **Shipped allowlist.** `beacon_allow.txt` in the repo lists vendor destinations for OS updates, telemetry, time
     sync and major SaaS. Matching is by domain when phase 2's DNS data maps the IP to a name, and by published CIDR
-    otherwise. The Microsoft decoy in the Backoff capture is the test case. Keep the list short, record where each
-    entry comes from, and let `--beacon-allow FILE` add to or replace it.
-  - **Popularity filter.** Skip destinations contacted by at least `beacon_popular_hosts` home hosts. It is kept
-    because it helps on bigger captures, but no acceptance test relies on it.
+    otherwise. The Microsoft decoy in the Backoff capture (one host, so nothing else can catch it) is the test case.
+    Keep the list short, record where each entry comes from, and let `--beacon-allow FILE` add to or replace it.
+  - **Popularity filter.** Skip destinations contacted by at least `beacon_popular_hosts` home hosts (default 5, or
+    10% of active home hosts). DARPA weeks 1 and 3 and CTU-5 are the test cases: it should remove the shared services
+    (DNS, mail, proxies) that every host on those networks beacons to.
   - **Learned suppressions.** Suppressions key on (kind, host, peer) when an alert has a peer. This stays optional and
     is tested within a dataset only.
 - Scoring runs once at end of input. Periodic rescoring for live use is out of scope.
@@ -116,9 +116,11 @@ median and MAD of the gaps.
 3. Neither decoy alerts. The Microsoft pair is stopped by the shipped allowlist, and the 2.1 s bursts by the coverage
    check. Record which control stopped each one.
 4. IoT-23 34-1: the Mirai C2 contacts raise `beacon` for 192.168.1.195; its NTP and DNS do not.
-5. The injected beacon in CTU-5 (18 sessions, 30 s period) raises `beacon`.
-6. DARPA weeks 1 and 3 (10 days, no attacks): at most 1 beacon pair per day after the shipped allowlist, with each one
-   identified. No learned suppressions are used for this criterion.
+5. The injected beacon in CTU-5 (18 sessions, 30 s period) raises `beacon`, and the un-injected CTU-5 and CTU-11
+   captures raise at most 5 beacon pairs each after the popularity filter, with each one identified. CTU labels its
+   background hosts as unknown, so some of these may be real; say so rather than tuning them away.
+6. DARPA weeks 1 and 3 (10 days, no attacks): at most 1 beacon pair per day after the allowlist and popularity filter,
+   with each one identified. No learned suppressions are used for this criterion.
 7. Unit tests for the contacts output, each score, the coverage check, the allowlist and suppression keying.
    `pytest` passes.
 
@@ -163,8 +165,8 @@ query rate no person produces.
 ## Phase 3: hour-of-day baselines (lowest priority)
 
 `VolumeBaseline` compares each window with the trailing hour, so it alerts at scheduled changes: start of day, nightly
-jobs, end of day. This phase matters less for a small office, where the volume floors already absorb quiet periods.
-Do it only if phase 0 shows DARPA volume alerts clustering at the same times each day.
+jobs, end of day. Only DARPA has enough days from one network to test this, so do it only if phase 0 shows DARPA
+volume alerts clustering at the same times each day.
 
 - With at least `seasonal_min_days` (default 3) of history, compare each window with the same hour of day on previous
   days: median and MAD of log values in a 1-hour bucket. With at least 7 days, use hour-of-week.
@@ -185,7 +187,7 @@ Do it only if phase 0 shows DARPA volume alerts clustering at the same times eac
 
 Our evaluation and published work (Houssel et al. 2024, about 50% accuracy on flow records, which is chance) agree: an
 LLM reading raw rows adds nothing to detection. Its use is explaining incidents the coded detector has already raised,
-so a person can decide faster. That matters for a small office, where nobody watches alerts full-time.
+so a person can decide faster.
 
 - New script `triage.py incidents.jsonl windows.csv hosts.csv [contacts.csv] -o triaged.jsonl`.
   - It is optional: `anthropic` goes in `requirements-triage.txt`, not `requirements.txt`, and `detect.py` stays
@@ -225,8 +227,9 @@ so a person can decide faster. That matters for a small office, where nobody wat
 
 ## Not planned
 
-- **Capturing or learning from the network where the tool will run.** Everything ships with defaults validated on
-  public captures.
+- **Live capture for development or tuning.** None is available, so everything ships with defaults validated on the
+  public captures. Live operation (rotating captures, incremental detection, alert delivery) is a later engineering
+  task that adds no detection.
 - **Supervised models trained on the public datasets.** They would learn dataset artifacts, such as DARPA's TTL and
   timing quirks, instead of attacks.
 - **Payload inspection beyond DNS.** Exploits and web attacks need a signature IDS such as Suricata or Zeek.
