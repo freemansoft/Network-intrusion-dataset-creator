@@ -344,11 +344,45 @@ after; windows with an alert that matches no label count as false alarms.
 | DARPA 1999 week 5 Monday, 22 h | 10 of 26 labeled attacks: SYN flood, UDP storm, 2 apache2 DoS, 2 smurf, telnet password guessing, dictionary brute force, warezclient, selfping | exploits and other payload-level or few-packet attacks | 0.80% with no learning (92 of the 127 windows are a DNS storm from a misconfigured host that the dataset documents); 0.03% with suppressions learned from the 10 attack-free days of weeks 1 and 3, with the same 10 attacks detected |
 | DARPA 2000 LLDoS | the DDoS flood | sweep (seen only as router ARP), probe, exploit, trojan install | 0.9% |
 
-This approach cannot see payloads, so exploits, web attacks, DNS tunnels and C2 inside normal TLS stay invisible, as does
-anything a host does at a rate below its own normal. Run it alongside Zeek, Suricata or RITA, not instead of them.
-Planned next steps (beacon detection, long-horizon host profiles, TLS/HTTP facts per destination, DNS tunnelling,
-hour-of-day baselines, LLM triage of incidents) are in `docs/plans/2026-11-05-deferred-detection.md`, with the
-investigation results that scoped them.
+## What the window-summary approach is and isn't good for
+
+The results above, and the investigations recorded in `docs/plans/2026-11-05-deferred-detection.md`, are an honest
+test of the idea this project started from: summarize a capture into fixed time windows of protocol and service counts,
+then look for anomalies in the summary. What they show:
+
+**Whole-network window totals (`windows.csv`) detect floods and little else.** Before the per-host columns were added,
+a port scan, an SSH brute force and a 40 MB upload injected into real university traffic were each detected in 0 of
+their windows. Totals summed over every host hide anything one host does, because the rest of the network's traffic
+dwarfs it. The window CSV remains useful as a labeled per-window feature table (the "dataset creator" in the project
+name) and for volume anomalies.
+
+**Per-host state per window (`hosts.csv`) is where every non-volumetric detection came from.** Scans, brute force, bulk
+upload, the Virut bot and the floods are all found by rules that read the per-host rows, and the false-alarm rate was
+brought to 0.03% on DARPA by learning per-host suppressions from attack-free days. The window CSV contributes only the
+flood rules. The detection value is in keeping state per host, not in the time window.
+
+**The next detections each need per-connection data that a window summary throws away.** C2 beaconing needs the times
+of each contact with each destination; long-horizon host profiles need a host's set of destinations over days; TLS and
+HTTP facts (SNI, JA3, certificate, Host header) are per-connection fields. A window summary cannot hold any of these,
+however the columns are chosen. What they need is a connection log: one row per connection with addresses, ports,
+times, bytes, flags and the handshake fields. That is what Zeek's `conn.log` and `ssl.log` are, and what RITA and
+AC-Hunter consume.
+
+**Payload-level attacks are out of reach for any flow- or window-based tool.** The 16 DARPA attacks still missed are
+mostly exploits, which only a signature IDS (Suricata, Zeek scripts) sees. The same is true of web attacks and of C2
+inside ordinary-looking TLS.
+
+In short: the time-window summary is a feature extractor, not a detector. The per-host and per-connection records it
+can be made to emit are where detection happens, and existing tools already emit those records from live traffic. Run
+this alongside Zeek, Suricata or RITA, not instead of them.
+
+**Where this goes next.** The project is being reframed around the connection log: per-connection rows become the
+primary output, `windows.csv` and `hosts.csv` become views derived from them, and detectors (and possibly an LLM
+triage step) read connections. If that does not produce detections that Zeek and RITA do not already give, the
+project's lasting contribution is the evaluation harness in `tools/eval/`: registered public captures, label files,
+synthetic-attack injection and a scorer, which did not exist in reusable form before. The earlier plan for beacons,
+host profiles, TLS/HTTP facts, DNS tunnelling, hour-of-day baselines and LLM triage, with the investigation results
+that scoped it, is in `docs/plans/2026-11-05-deferred-detection.md`.
 
 # performance
 This progam makes use of 5 cores, 4 for python Python and one for tshark.  
