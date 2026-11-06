@@ -258,6 +258,41 @@ def test_dict_observed_values_use_their_first_number():
     assert detect.scalar(7) == 7.0
 
 
+def test_several_days_read_as_one_run_in_time_order(tmp_path):
+    # a failed-connection host rule needs 5 windows; split them across two daily files, hosts
+    # written as window 3-4 on day 1 and 0-2 on day 2 (day 2 = T0 + 1 day), given out of order
+    day = 86_400_000
+    rows1 = [host(i, "10.0.0.66", syn_out=30, synack_in=0) for i in range(3)]
+    rows2 = [host(i, "10.0.0.66", syn_out=30, synack_in=0) for i in range(2)]
+    for r in rows2:
+        r["window_start_time"] += day
+        r["window_end_time"] += day
+    w1 = write_csv(tmp_path / "w1.csv", TimesAndCounts.fieldnames, windows(3))
+    w2_rows = windows(2)
+    for r in w2_rows:
+        r["window_start_time"] += day
+        r["window_end_time"] += day
+    w2 = write_csv(tmp_path / "w2.csv", TimesAndCounts.fieldnames, w2_rows)
+    h1 = write_csv(tmp_path / "h1.csv", HOST_FIELDNAMES, rows1)
+    h2 = write_csv(tmp_path / "h2.csv", HOST_FIELDNAMES, rows2)
+
+    assert detect.classify_inputs([h2, w2, h1, w1]) == ([w1, w2], [h1, h2])
+    # a day apart, the 600 s failed-connection span never holds 5 windows: no alert either way
+    assert detect.detect([w1, w2], [h1, h2], detect.THRESHOLDS) == []
+    # moved to the same day, the rows across the two files add up
+    for r in rows2:
+        r["window_start_time"] -= day - 3 * STEP
+        r["window_end_time"] -= day - 3 * STEP
+    h2 = write_csv(tmp_path / "h2.csv", HOST_FIELDNAMES, rows2)
+    found = detect.detect([w1, w2], [h1, h2], detect.THRESHOLDS)
+    assert ("failed_connections", "10.0.0.66") in kinds(found)
+    out = tmp_path / "a.jsonl"
+    detect.main([h2, w2, h1, w1, "-o", str(out)])
+    assert json.loads(out.read_text().splitlines()[0])["kind"] == "failed_connections"
+    with pytest.raises(SystemExit):
+        detect.main([h1, "-o", str(out)])
+
+
 def test_cli_learn_then_suppress(tmp_path):
     rows = [host(i, "10.0.0.118", syn_out=30, synack_in=0) for i in range(5)]
     w = write_csv(tmp_path / "w.csv", TimesAndCounts.fieldnames, windows(10))

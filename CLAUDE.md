@@ -17,6 +17,13 @@ python3 main.py -i eth0 -l 120 -wt 5000
 # Per-host rows, home network, labels; then the offline detector
 python3 main.py -s capture.pcap -wt 5000 -o windows.csv -oh hosts.csv --home-net 10.0.0.0/8 --labels labels.csv
 python3 detect.py windows.csv hosts.csv -o alerts.jsonl --incidents incidents.jsonl [--set name=value]
+python3 detect.py day1-windows.csv day1-hosts.csv day2-windows.csv day2-hosts.csv -o alerts.jsonl  # consecutive captures as one run
+
+# Evaluate against the labeled captures in datasets/ (outputs in eval-runs/, gitignored)
+python3 tools/eval/run.py --list
+python3 tools/eval/run.py darpa99 [--suppress supp.csv] [--set name=value]
+python3 tools/eval/run.py darpa-attackfree --learn-suppressions supp.csv
+python3 tools/eval/run.py injected --python /path/to/python-with-scapy   # builds the injected pcap first
 
 # Tests (pipeline_test.py runs main.py on tests/fixtures/*.pcap and is skipped without tshark)
 python3 -m pytest
@@ -30,6 +37,7 @@ python3 tests/fixtures/make_fixtures.py
 - Code is formatted with `black`. There is no linter config.
 - `*.pcap`, `*.pcapng`, `*.cap`, `*.csv` and `*.log` are gitignored. The sample captures in the repo root exist only locally (more are at https://wiki.wireshark.org/SampleCaptures); `sample_output/*.csv` is the only committed output. `tests/fixtures/*.pcap` is un-ignored explicitly.
 - `datasets/` holds downloaded labeled intrusion captures and is gitignored. `datasets/SOURCES.md` (committed) records each file's URL, SHA-256, label source and attack intervals.
+- `tools/eval/` is the evaluation harness: `datasets.yaml` names each capture's pcaps, home net and label file (`labels/*.csv`, columns `label,start,end,ips`); `run.py` captures, detects and scores; `score.py` matches alerts to labels by host and time; `inject.py` and `gen_attacks.py` (scapy) build the synthetic-attack capture. There is no live traffic: the captures are the only development and test data, so every detector change is judged by `run.py` on them.
 
 ## Architecture
 

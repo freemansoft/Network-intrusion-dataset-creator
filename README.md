@@ -315,9 +315,25 @@ python3 detect.py normal_windows.csv normal_hosts.csv -o /dev/null --learn-suppr
 python3 detect.py windows.csv hosts.csv -o alerts.jsonl --suppress suppress.csv
 ```
 
+`detect.py` takes any number of windows and hosts files, tells them apart by their header and reads them in time
+order, so consecutive daily captures of one sensor can be learned from or detected on as a single run.
+
 ## Measured on labeled captures
 
-The captures are described in `datasets/SOURCES.md`.
+The captures are described in `datasets/SOURCES.md`, and `tools/eval/run.py` reproduces every number below:
+
+```bash
+python3 tools/eval/run.py --list                      # the datasets in tools/eval/datasets.yaml
+python3 tools/eval/run.py darpa99                     # main.py per pcap, detect.py, score against the labels
+python3 tools/eval/run.py darpa-attackfree --learn-suppressions supp.csv
+python3 tools/eval/run.py darpa99 --suppress supp.csv --set volume_z=8
+```
+
+Outputs go to `eval-runs/<dataset>/` (gitignored). A pcap that already has a `windows.csv` is not captured again, so a
+detector change is re-scored in seconds. `tools/eval/inject.py` builds the synthetic-attack capture by cutting a benign
+stretch of CTU-5 and merging in the attacks from `tools/eval/gen_attacks.py` (scapy, with a fixed seed). An alert
+matches a label when its host is one of the label's IPs and its window falls between 10 s before the label and 10 min
+after; windows with an alert that matches no label count as false alarms.
 
 | Capture | Detected | Missed | Windows with a false alarm |
 | - | - | - | - |

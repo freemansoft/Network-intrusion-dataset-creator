@@ -1,0 +1,84 @@
+# Datasets for tools/eval/run.py. Paths are relative to the repo root; the captures live in the
+# gitignored datasets/ directory and are described in datasets/SOURCES.md.
+#
+# Per dataset: pcaps (list; globs allowed; several files are read by detect.py as one run in time
+# order, so they must be consecutive captures of the same sensor, not two sensors of the same
+# period), home_net, labels (optional), window_msec (default 5000), inject (optional; builds the
+# pcap with inject.py when it is missing).
+
+runs_dir: eval-runs
+
+datasets:
+  injected:
+    about: CTU-5 university background (first 569 s, before the Virut bot starts) with the gen_attacks.py attacks
+    pcaps: [datasets/injected-ctu5/ctu5_injected.pcap]
+    home_net: 147.32.0.0/16
+    labels: tools/eval/labels/injected.csv
+    inject:
+      source: datasets/ctu13-scenario5-virut/capture20110815-2.truncated.pcapng
+      cut: [1313419400, 1313419970]
+      attack_start: 1313419420
+      victim: 147.32.84.250
+      attacker: 147.32.84.251
+      headers_only: true
+
+  ctu5:
+    about: CTU-13 scenario 5, Virut bot on a university network, 30 min, headers only
+    pcaps: [datasets/ctu13-scenario5-virut/capture20110815-2.truncated.pcapng]
+    home_net: 147.32.0.0/16
+    labels: tools/eval/labels/ctu5.csv
+
+  ctu11:
+    about: CTU-13 scenario 11, Rbot ICMP DDoS, 16 min, headers only
+    pcaps: [datasets/ctu13-scenario11-rbot-icmp-ddos/capture20110818-2.truncated.pcapng]
+    home_net: 147.32.0.0/16
+    labels: tools/eval/labels/ctu11.csv
+
+  iot23:
+    about: IoT-23 capture 34-1, one Mirai-infected device, 24 h
+    pcaps: [datasets/iot23-34-1-mirai/2018-12-21-15-50-14-192.168.1.195.pcap]
+    home_net: 192.168.1.0/24
+    labels: tools/eval/labels/iot23.csv
+
+  lldos:
+    about: DARPA 2000 LLDoS 1.0, inside sniffer, 3.2 h
+    pcaps: [datasets/darpa2000-lldos1.0/LLS_DDOS_1.0-inside.pcap]
+    home_net: 172.16.0.0/16
+    labels: tools/eval/labels/lldos.csv
+
+  darpa99:
+    about: DARPA 1999 test week 5 Monday, inside sniffer, 22 h, 26 labeled attacks
+    pcaps: [datasets/darpa1999-week5-monday/w5-monday-inside.pcap]
+    home_net: 172.16.0.0/16,192.168.0.0/16
+    labels: tools/eval/labels/darpa99.csv
+
+  darpa-attackfree:
+    about: DARPA 1999 training weeks 1 and 3, inside sniffer, 10 attack-free days (suppression learning)
+    pcaps:
+      - datasets/darpa1999-attackfree-weeks1-3/w1-monday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w1-tuesday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w1-wednesday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w1-thursday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w1-friday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w3-monday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w3-tuesday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w3-wednesday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w3-thursday-inside.pcap
+      - datasets/darpa1999-attackfree-weeks1-3/w3-friday-inside.pcap
+    home_net: 172.16.0.0/16,192.168.0.0/16
+
+  acm-backoff:
+    about: Active Countermeasures Backoff lab, Cobalt Strike HTTP beacon every 30 s (24 h, then a 1 h capture two days later)
+    pcaps:
+      - datasets/acm-backoff/backoff_24hr.pcap
+      - datasets/acm-backoff/backoff_1hr.pcap
+    home_net: 192.168.99.0/24
+    labels: tools/eval/labels/acm-backoff.csv
+
+  acm-poshc2:
+    about: Active Countermeasures PoshC2 lab, HTTPS beacon every 120 s (1 h capture, then 24 h continuing 36 s later)
+    pcaps:
+      - datasets/acm-poshc2/posh_stealthy_1hr.pcap
+      - datasets/acm-poshc2/posh_stealthy_24hr.pcap
+    home_net: 10.0.0.0/24
+    labels: tools/eval/labels/acm-poshc2.csv

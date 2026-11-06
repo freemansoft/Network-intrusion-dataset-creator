@@ -2,9 +2,12 @@
 """Offline intrusion detector over the dataset creator's output.
 
     python3 detect.py windows.csv hosts.csv -o alerts.jsonl --incidents incidents.jsonl
+    python3 detect.py day1-windows.csv day1-hosts.csv day2-windows.csv day2-hosts.csv ...
 
 Reads windows.csv (-o) and hosts.csv (-oh) from main.py and writes one JSON alert per line.
-Three layers:
+Several captures of the same network (one per day) can be given together, in any order: the
+files are told apart by their header and read in time order as one run, so the trailing
+baselines and suppression learning span all of them. Three layers:
 
 1. Window rules with absolute thresholds: SYN floods (half-open SYNs plus many sources to one
    destination) and fast scans (one source contacting many ports or hosts in a window).
@@ -335,13 +338,42 @@ class VolumeBaseline:
         return out
 
 
-def read_rows(path):
-    with open(path, newline="") as f:
-        yield from csv.DictReader(f)
+def as_paths(paths):
+    if not paths:
+        return []
+    return [paths] if isinstance(paths, str) else list(paths)
+
+
+def read_rows(paths):
+    """Rows of one CSV, or of several CSVs in the order given (one capture per day, say)."""
+    for path in as_paths(paths):
+        with open(path, newline="") as f:
+            yield from csv.DictReader(f)
+
+
+def classify_inputs(paths):
+    """Split main.py output files into windows CSVs and hosts CSVs by their header, each list
+    ordered by its first window start, so several days can be given in any order."""
+    kinds = {"windows": [], "hosts": []}
+    for path in paths:
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, [])
+            first = next(reader, None)
+        kind = "hosts" if "host" in header else "windows"
+        start = float("inf")
+        if first and "window_start_time" in header:
+            start = float(first[header.index("window_start_time")])
+        kinds[kind].append((start, path))
+    return (
+        [path for _, path in sorted(kinds["windows"])],
+        [path for _, path in sorted(kinds["hosts"])],
+    )
 
 
 def detect(windows_path, hosts_path, t):
-    host_rows = read_rows(hosts_path) if hosts_path else iter(())
+    """Alerts over one or more windows CSVs and zero or more hosts CSVs (paths or lists of paths)."""
+    host_rows = read_rows(hosts_path)
     pending = next(host_rows, None)
     host_rules = HostRules(t)
     baseline = VolumeBaseline(t, VOLUME_COLUMNS)
@@ -434,8 +466,13 @@ def apply_suppressions(alerts, peaks, escalation):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("windows", help="windows CSV from main.py -o")
-    parser.add_argument("hosts", nargs="?", help="hosts CSV from main.py -oh")
+    parser.add_argument(
+        "inputs",
+        nargs="+",
+        metavar="CSV",
+        help="windows CSVs (main.py -o) and hosts CSVs (main.py -oh), in any order; give several "
+        "of each to treat consecutive captures as one run",
+    )
     parser.add_argument("-o", "--alerts", default="-", help="alerts JSONL [stdout]")
     parser.add_argument("--incidents", help="also write merged incidents JSONL here")
     parser.add_argument(
@@ -476,7 +513,10 @@ def main(argv=None):
             parser.error(f"unknown threshold {name}; known: {', '.join(t)}")
         t[name] = float(value)
 
-    alerts = detect(args.windows, args.hosts, t)
+    windows, hosts = classify_inputs(args.inputs)
+    if not windows:
+        parser.error("no windows CSV among the inputs")
+    alerts = detect(windows, hosts, t)
     if args.learn_suppressions:
         until = args.learn_until * 1000 if args.learn_until else None
         exclude = {h.strip() for h in args.learn_exclude.split(",") if h.strip()}

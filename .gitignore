@@ -20,3 +20,6 @@ __pycache__
 
 # shared Claude Code project settings (plugins)
 !.claude/settings.json
+
+# outputs of tools/eval/run.py
+/eval-runs/
