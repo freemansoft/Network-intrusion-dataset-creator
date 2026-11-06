@@ -1,6 +1,8 @@
-# Plan: public baselines, beacons, DNS tunnelling, seasonal baselines, LLM triage
+# Plan: public baselines, beacons, host profiles, TLS/HTTP facts, DNS tunnelling, seasonal baselines, LLM triage
 
-Status: not started. This plan covers the items deferred from `docs/plans/2026-11-05-per-host-detector.md`.
+Status: phase 0 implemented on branch `feature/public-baselines` (results below). Phases 1-3 were scoped by three
+investigations on 2026-11-05 (RITA reference scores, long-horizon host profiles, TLS/HTTP metadata); their findings are
+in the phase sections. This plan covers the items deferred from `docs/plans/2026-11-05-per-host-detector.md`.
 
 ## Why
 
@@ -19,36 +21,46 @@ from a single host (IoT-23, Active Countermeasures) to a university router (CTU-
   popularity filter) and one that only helps on a quiet one (the allowlist) are both kept, and the acceptance criteria
   say which capture exercises which.
 
-All datasets are recorded in `datasets/SOURCES.md`.
+All datasets are recorded in `datasets/SOURCES.md`; `tools/eval/run.py` runs and scores each one.
 
 | Phase | Builds | Validated on |
 | - | - | - |
-| 0. Public long baselines and injection | multi-file input, injection harness in the repo | DARPA 1999 weeks 1 and 3, then week 5 |
-| 1. Beacon detection | contacts output, beacon scorer, shipped allowlist | Active Countermeasures Backoff and PoshC2, IoT-23, injected beacon, DARPA weeks 1 and 3 |
-| 2. DNS tunnelling | DNS columns and rules | injected tunnel, CIC-Bell-DNS-EXF-2021, DARPA weeks 1 and 3 |
-| 3. Hour-of-day baselines (lowest priority) | seasonal and per-host volume baselines | DARPA weeks 1 and 3, then week 5 |
-| 4. LLM triage of incidents | optional `triage.py` | incident files from every labeled run |
+| 0. Public long baselines and injection (done) | multi-file `detect.py`, `tools/eval/` harness | DARPA 1999 weeks 1 and 3, then week 5; injected CTU-5 |
+| 1. Beacon detection | contacts output, beacon scorer, shipped allowlist | Active Countermeasures Backoff and PoshC2, IoT-23, injected beacon, CTU-5, DARPA weeks 1 and 3 |
+| 2. Long-horizon host profiles | profile file learned over days; unknown-source and novel-port rules | DARPA weeks 1 and 3, then week 5; CTU-5 for real background |
+| 3. TLS and HTTP facts per host and destination | corroborating columns attached to beacon and profile alerts | Backoff, PoshC2, DARPA (HTTP only) |
+| 4. DNS tunnelling | DNS columns and rules | injected tunnel, CIC-Bell-DNS-EXF-2021, DARPA weeks 1 and 3 |
+| 5. Hour-of-day baselines (lowest priority) | seasonal and per-host volume baselines | DARPA weeks 1 and 3, then week 5 |
+| 6. LLM triage of incidents | optional `triage.py` | incident files from every labeled run |
 
-## Phase 0: public long baselines and an injection harness
+Order: 1, 2 and 3 share the contacts output and the per-destination state, so build 1 first and let 2 and 3 reuse
+it. 4 is independent. 5 only if phase 0's DARPA volume alerts turn out to cluster by hour. 6 last.
 
-- **Multi-file input.** `detect.py` accepts several windows and hosts files (repeat the argument or pass a glob) and
-  reads them in time order. `main.py` produces one file per pcap, and DARPA weeks 1 and 3 are 10 pcaps.
-- **Injection harness.** Move the evaluation harness from the scratchpad into `tools/eval/`. It covers:
-  - injecting synthetic attacks into a benign pcap (scapy, an optional dependency)
-  - running `main.py` and `detect.py`
-  - scoring alerts against label files (host and time match, false-alarm windows)
-  - a `labels/` directory with the label CSVs for each dataset in `SOURCES.md`
-- **Inject into more than one benign capture.** Use DARPA week 1 (a LAN with many hosts) and the attack-free parts of
-  the Active Countermeasures captures (one host), as well as the CTU-13 university traffic. That checks the existing
-  rules at three network sizes.
-- **Within-dataset learning test.** Learn suppressions from DARPA weeks 1 and 3, apply them to week 5, and report the
-  false-alarm rate with and without them. Week 5 currently stands at 0.80% with no suppressions; the target is 0.5%.
+## Phase 0: public long baselines and an injection harness (done)
 
-Done when:
+- **Multi-file input.** `detect.py` accepts any number of windows and hosts CSVs, tells them apart by header and reads
+  them in time order, so DARPA's 10 attack-free days are one run.
+- **Harness in `tools/eval/`.** `datasets.yaml` registry, `labels/*.csv`, `run.py` (capture, detect, score),
+  `score.py`, `inject.py` and `gen_attacks.py` (scapy). Labels may name the alert kinds that count, so an overlapping
+  attack on the same host is not credited for another's alert (this had made the injected beacon and DNS tunnel look
+  detected when they were not).
+- **Within-dataset learning test.** `run.py darpa-attackfree --learn-suppressions` then `run.py darpa99 --suppress`.
 
-1. The harness runs from the repo with one command per dataset.
-2. DARPA week 5 is reported with and without week 1-3 suppressions.
-3. The injected attacks are detected in at least two benign captures besides CTU-5.
+### Results (2026-11-05)
+
+| Check | Result |
+| - | - |
+| `inject.py` reproduces the earlier injected capture | Yes: 1,394,340 packets, identical labels |
+| Injected CTU-5, CTU-11 suppressions (labeled hosts excluded) | 5/7 with the right kinds: fast and slow scan, SYN flood, SSH brute force (36 s), upload (11 s); beacon and DNS tunnel not detected; 0% false-alarm windows |
+| CTU-11, no suppressions | ICMP DDoS yes, C2 bootstrap no; 85.6% false-alarm windows, nearly all `slow_sweep` and `failed_connections` from 147.32.84.59 |
+| CTU-5, CTU-11 suppressions | Virut bot 200 s after onset (`failed_connections`); 0.83% false-alarm windows (3, one host) |
+| DARPA week 5, no suppressions | 10/26 labels (as before); 0.80% false-alarm windows (127 of 15,835), 92 of them the documented hume DNS storm |
+| DARPA week 5, suppressions learned from weeks 1 and 3 (66 learned, 136 alerts suppressed) | the same 10/26, none lost; **0.03%** false-alarm windows (5 of 15,835): two hosts' TCP volume and two external hosts' single windows. Target 0.5% met. The attack-free weeks taught the detector hume's DNS storm and the busy FTP servers |
+
+Each DARPA day captures in 4-6 minutes (5,300-6,800 packets/s); the 10 learning days took 25 minutes two at a time.
+
+Injecting into DARPA week 1 and the Active Countermeasures captures (three network sizes) is not done yet; the
+`inject` block in `datasets.yaml` supports it once a cut and the victim/attacker addresses are chosen for each.
 
 ## Phase 1: beacon detection
 
@@ -63,16 +75,47 @@ Ground truth is in `SOURCES.md` section 7:
 | Capture | Beacon | Decoys in the same capture |
 | - | - | - |
 | Backoff (Cobalt Strike), 24 h | 192.168.99.55 to 157.245.128.27:80, 3,020 connections, median gap 28.6 s, MAD 0.8 s | the same host to two Microsoft Azure addresses on :443, every 900.2 s, MAD 0: more regular than the beacon |
-| PoshC2, 25 h | 10.0.0.62 to 157.230.93.100:443, 757 connections, 120.2 s, MAD 0 | the same host to four :443 servers, about 160 connections each in bursts 2.1 s apart (median gap 2.1 s, MAD 0) |
+| PoshC2, 25 h | 10.0.0.62 to 157.230.93.100:443, 757 connections, 120.2 s, MAD 0 | the same host to four :443 servers, about 160 connections each in bursts 2.1 s apart (median gap 2.1 s, MAD 0); these are empty connect/disconnect probes with no TLS hello |
 
 Timing regularity alone ranks both decoys at or above the real beacons. The scorer needs more evidence than the
 median and MAD of the gaps.
 
+### Reference: RITA's algorithm on these captures
+
+RITA itself needs a database, so its v5 beacon formula (`analysis/beacons.go`: interval skew and MAD, size skew and
+MAD, a 24-bin connection histogram scored by coefficient of variation or a bimodal fit, and a duration score; equal
+weights) was reimplemented on Zeek `conn.log` and run on every beacon capture (scripts in the scratchpad; Zeek 9.0.1
+was installed with Homebrew for this). Where the true C2 ranks:
+
+| Capture | C2 rank | Beaten by |
+| - | - | - |
+| Backoff 24 h | 1 (0.989) | nothing, but the 900 s Microsoft pair is 0.986 and wins on timing alone |
+| Backoff 1 h | 1 | |
+| PoshC2 24 h | 18 (0.992) | 17 benign pairs at a perfect 1.000: a 300 s poll and 16 burst pairs, all four decoys among them |
+| PoshC2 1 h | 1 | |
+| IoT-23 Mirai | 9 (0.640) | eight NTP servers; 5,000 failed SYN retries wreck the C2's interval statistics |
+| CTU-5 | not meaningful | Zeek cannot parse the header-truncated capture |
+
+Design constraints taken from this:
+
+- The best single component is **evenness of connection counts across the capture** (the histogram CV): the C2 is
+  first on it in all four Active Countermeasures captures. That is the plan's coverage check; make it the primary
+  score, not one of four equal terms.
+- RITA ignores the interval magnitude, so a 2 s burst and a 120 s beacon look alike. **A median gap below
+  `beacon_min_gap_sec` (default 5) is a burst, not a beacon.**
+- RITA's bimodal-histogram fallback is what lets hourly bursts score 1.000. **Do not copy it.**
+- **Collapse SYN retries into attempts** (same src, dst, dport within a few seconds count once) before scoring, or a
+  C2 with a flaky server loses to NTP.
+- **Exclude multicast and broadcast destinations up front**, or mDNS, LLMNR and SSDP score 1.000.
+- These numbers are the yardstick: criterion 8 below requires our scorer to beat them.
+
 ### New output: `--contactfile contacts.csv` (`-oc`)
 
 - One row per initiated contact, using the same "initiated" rule as `hosts.csv`: TCP SYN, UDP to a port below 1024,
-  ICMP echo request.
-- Columns: `time_msec`, `src`, `dst`, `protocol`, `sport`, `dport`, `bytes_out`, `bytes_in`, `pkts_out`, `pkts_in`.
+  ICMP echo request. SYNs from source port 20 (active-mode FTP data) are not contacts the client chose; record them
+  with `dport` = `ftpdata` so they collapse (see phase 2).
+- Columns: `time_msec`, `src`, `dst`, `protocol`, `sport`, `dport`, `bytes_out`, `bytes_in`, `pkts_out`, `pkts_in`,
+  `answered` (a SYN-ACK or reply was seen in the window).
 - Bytes and packets: `WindowHosts` keeps a 5-tuple table and adds each packet to its flow until the window flushes,
   then writes the rows. Traffic after the window ends is not counted, which is acceptable because beacons are small and
   finish inside one window.
@@ -81,20 +124,22 @@ median and MAD of the gaps.
 
 ### New module: `beacons.py` (stdlib only), used by `detect.py --contacts contacts.csv`
 
-- Group contacts by (src, dst, dport). Score each pair that has at least `beacon_min_contacts` (default 10) over at
-  least `beacon_min_span_sec` (default 300).
+- Collapse retries: contacts with the same (src, dst, dport) within `beacon_retry_sec` (default 3) are one attempt.
+- Group attempts by (src, dst, dport). Score each pair that has at least `beacon_min_contacts` (default 10) over at
+  least `beacon_min_span_sec` (default 300), and whose median gap is at least `beacon_min_gap_sec` (default 5).
 - Scores, each from 0 to 1:
+  - **Coverage** (primary): the share of `median gap` slots across the pair's span that contain at least one attempt.
+    Bursts cover a tiny share of the span; a beacon covers nearly all of it.
   - **Interval regularity:** 1 - min(1, MAD / median) of the gaps.
   - **Interval symmetry:** 1 - |Bowley skew| of the gaps.
-  - **Size regularity:** the same MAD measure on bytes per contact.
-  - **Coverage:** the share of `median gap` slots across the pair's span that contain at least one contact. Bursts of
-    retries (the PoshC2 decoy) cover a tiny share of the span, while a beacon covers nearly all of it.
-- Alert as `beacon` when the mean score is at least `beacon_score` (default 0.8, provisional) and coverage is at least
-  `beacon_min_coverage` (default 0.6).
-- Each alert names `host` = src, a new `peer` field = `dst:dport`, the period, the contact count and each score.
+  - **Size regularity:** the same MAD measure on bytes per attempt.
+- Alert as `beacon` when coverage is at least `beacon_min_coverage` (default 0.6) and the mean of the four scores is
+  at least `beacon_score` (default 0.8, provisional). Both numbers are to be set from the captures, not guessed.
+- Each alert names `host` = src, a new `peer` field = `dst:dport`, the period, the attempt count and each score, plus
+  the phase 3 facts for that pair when available.
 - **False-alarm controls:**
   - **Shipped allowlist.** `beacon_allow.txt` in the repo lists vendor destinations for OS updates, telemetry, time
-    sync and major SaaS. Matching is by domain when phase 2's DNS data maps the IP to a name, and by published CIDR
+    sync and major SaaS. Matching is by domain when phase 4's DNS data maps the IP to a name, and by published CIDR
     otherwise. The Microsoft decoy in the Backoff capture (one host, so nothing else can catch it) is the test case.
     Keep the list short, record where each entry comes from, and let `--beacon-allow FILE` add to or replace it.
   - **Popularity filter.** Skip destinations contacted by at least `beacon_popular_hosts` home hosts (default 5, or
@@ -106,32 +151,137 @@ median and MAD of the gaps.
 - **Known limits:**
   - A beacon slower than span / 10 is invisible.
   - Heavy jitter (over 50%) or rotating destinations defeat the timing scores.
-  - Beacons over DNS show up per resolver, not per C2 domain; phase 2 covers that.
+  - Beacons over DNS show up per resolver, not per C2 domain; phase 4 covers that.
   - An allowlist entry is a blind spot if C2 is hosted on that vendor's infrastructure.
 
 ### Acceptance criteria
 
 1. Backoff 24 h and PoshC2 24 h: each beacon pair raises `beacon` naming the implant host and C2 peer.
 2. Backoff and PoshC2 1 h: same result. Each has about 30 or more contacts, so this tests the minimum span.
-3. Neither decoy alerts. The Microsoft pair is stopped by the shipped allowlist, and the 2.1 s bursts by the coverage
-   check. Record which control stopped each one.
+3. Neither decoy alerts. The Microsoft pair is stopped by the shipped allowlist, and the 2.1 s bursts by the minimum
+   gap and coverage checks. Record which control stopped each one.
 4. IoT-23 34-1: the Mirai C2 contacts raise `beacon` for 192.168.1.195; its NTP and DNS do not.
 5. The injected beacon in CTU-5 (18 sessions, 30 s period) raises `beacon`, and the un-injected CTU-5 and CTU-11
    captures raise at most 5 beacon pairs each after the popularity filter, with each one identified. CTU labels its
    background hosts as unknown, so some of these may be real; say so rather than tuning them away.
 6. DARPA weeks 1 and 3 (10 days, no attacks): at most 1 beacon pair per day after the allowlist and popularity filter,
    with each one identified. No learned suppressions are used for this criterion.
-7. Unit tests for the contacts output, each score, the coverage check, the allowlist and suppression keying.
-   `pytest` passes.
+7. Unit tests for the contacts output, retry collapsing, each score, the coverage check, the allowlist and suppression
+   keying. `pytest` passes.
+8. Ranked by our score before any allowlist or filter, the true C2 is first in all four Active Countermeasures
+   captures and above every NTP server in IoT-23 (RITA's formula: 1, 1, 18, 1 and 9).
 
-## Phase 2: DNS tunnelling
+## Phase 2: long-horizon host profiles
+
+`hoststats.Novelty` forgets a contact after 10 minutes. A profile that remembers, per home host, every destination and
+port it has initiated contact with over days turns "this host did something it has never done" into a rule. The
+investigation (DARPA weeks 1 and 3 as the profile, week 5 scored; scripts in the scratchpad) found:
+
+- **Novel destination IP is useless:** every host browses to 25-60 new IPs a day. Not a rule.
+- **Active-mode FTP data** (the server SYNs from port 20 to the client's ephemeral port) produced 400-700 "novel ports"
+  a day until collapsed into one `ftpdata` key, after which week 5 had 3 benign novel-port events. `contacted_ports`
+  in `hosts.csv` has the same flaw today.
+- Three rules, scored per host in 10-minute buckets on week 5:
+
+| Rule | Labels caught (of 26) | False-alarm buckets in 22 h |
+| - | - | - |
+| `unknown_inbound_source`: an external IP never seen initiating contact in the profile contacts a home host | 9-10 (neptune, both apache2 DoS, telnet guessing, ping-of-death, warezclient, syslogd, crashiis, dosnuke) | 9, all attacker IPs probing outside their label windows; none benign |
+| `unknown_home_source`: a home address never seen initiating contact | 3 (portsweep, dictionary brute force, ncftp) | 3, planted test hosts |
+| `novel_port`: a known home host uses a destination port it never used, excluding 80, 443, 53 and `ftpdata` | 6 (arppoison, dict, imap, loadmodule, ncftp, udpstorm) | 5, none clearly benign |
+
+Together, 17 of 26 labels show some signal (10 today). The misses are smurf (ICMP replies, not requests), a FIN-only
+sweep, and payload-level exploits, which no contact rule can see. Leave-one-day-out over the 10 attack-free days gave
+the same benign rates as week 5, so the profile is stable.
+
+Caveats that shape the design: DARPA's background is scripted (only 11 external hosts ever initiate inbound), so
+`unknown_inbound_source` has an unrealistically clean baseline; on an Internet-facing network inbound scanners would
+fire it constantly. Victims almost never show novelty, so this detects initiators only.
+
+### Design
+
+- **Profile file.** `detect.py --learn-profile OUT` writes, from the contacts output, per home host: the set of
+  (dst, dport) pairs and the set of dports, plus the set of external sources seen initiating, each with the number of
+  days seen. `--profile FILE` loads it. The file is CSV, like suppressions. Learning needs the contacts output from
+  phase 1 (`-oc`).
+- **Rules** (names as above), each over 10-minute buckets per host, thresholds configurable:
+  - `unknown_inbound_source` fires only for contacts that were **answered** (SYN-ACK or reply seen), with
+    `unknown_inbound_min` (default 1) contacts. Unanswered probes from unknown sources are counted in the alert's
+    detail but do not fire; that is the restriction the caveat calls for, and criterion 3 measures whether it is
+    enough on real background.
+  - `unknown_home_source`: any contact; detail says "new device on the LAN".
+  - `novel_port`: dport not in `profile_web_ports` (default 80, 443, 53, `ftpdata`) and never used by this host;
+    `novel_port_min` (default 1).
+- **FTP fix in `hoststats.py` too:** SYNs from source port 20 count as `ftpdata` in `contacted_ports` and
+  `new_contacted_ports`, in the same change.
+- Without a profile file the rules are off, so nothing changes for existing users.
+
+### Acceptance criteria
+
+1. DARPA week 5 with the week 1-3 profile: at least 16 of 26 labels raise one of the three rules naming the attacker
+   or victim within 10 minutes (the investigation's 17 is the reference), and at most 20 false-alarm buckets, each
+   identified.
+2. DARPA leave-one-day-out: profile on 9 attack-free days, run the 10th; at most 2 `novel_port` and 2
+   `unknown_home_source` alerts per day, each identified.
+3. CTU-5, profile learned from the first 8 minutes (before the bot): report the `unknown_inbound_source` rate on the
+   remaining 22 minutes with and without the answered-only restriction. This is the real-background test; the
+   number is reported, not targeted, and decides whether the rule ships on by default.
+4. The `ftpdata` fix removes the FTP-data ports from `contacted_ports` on DARPA (hume's count drops to the tens) and
+   changes nothing on the captures without active FTP.
+5. Tests for profile learning, loading, each rule and the `ftpdata` key. `pytest` passes.
+
+## Phase 3: TLS and HTTP facts per host and destination
+
+Both lab C2s stand out in metadata tshark already decodes. On PoshC2 (HTTPS) every one of these fields separates the
+C2 from the host's 125 other TLS destinations with at most one benign outlier: no SNI (716 of 716 hellos), a JA3
+fingerprint used toward one destination only, TLS 1.0, and a self-signed certificate with no SAN and a 10-year validity
+starting 58 minutes before the capture (seen on only 12 of 716 sessions because the server resumes with tickets). On
+Backoff (HTTP) the `Host` header is a bare IP (the C2 only), the user agent is used toward one destination only, the URI
+is constant (`/updates`, 3,020 times) and every response is an empty 200. In neither capture does any DNS answer return
+the C2 address.
+
+These are corroboration, not a detector: both frameworks ran default profiles, real desktops make "unique JA3" and
+"unique user agent" far noisier, TLS 1.3 and resumption hide certificates, and the burst decoys carry no TLS at all.
+
+### Design
+
+- **Per (home host, destination, port) facts**, kept by `WindowHosts` across windows and written at end of input to
+  `--factsfile facts.csv` (`-of`), one row per pair: `tls_hellos`, `tls_no_sni`, `tls_sni`, `tls_ja3`,
+  `tls_min_version`, `cert_seen`, `cert_self_signed`, `cert_no_san`, `cert_days_valid`, `http_requests`,
+  `http_host_is_ip`, `http_user_agents`, `http_distinct_uris`, `dns_answered` (some DNS answer in the capture mapped a
+  name to this destination).
+- **Derived per host:** JA3 fan-out (destinations per JA3) and user-agent fan-out, so "used toward one destination
+  only" can be stated.
+- `detect.py --facts facts.csv` attaches the pair's facts to every `beacon`, `novel_port` and `unknown_*` alert for that
+  pair, and raises the alert's `evidence` count by one for each of: no SNI, single-destination JA3, self-signed cert,
+  bare-IP Host, single-destination user agent, no DNS answer. `evidence` is for ranking and triage; it does not create
+  alerts.
+- **Parser work.** `capture.unwrap` turns `tls_tls_handshake_extensions_server_name` into
+  `tls.handshake_extensions_server_name` (not the Wireshark dotted name), and likewise for the `x509*` and `http_*`
+  keys; look-ups use the mangled names, which the investigation listed. tshark emits `x509af_utcTime` twice at one
+  level (not-before, not-after) and `json.loads` keeps the last, so validity needs both values recovered from the raw
+  EK line or `cert_days_valid` is dropped. This tshark (4.0.1) has JA3 but not JA4.
+- Cost: the TLS dissection is already paid for by `-V`; the full EK pass takes 24 s (Backoff) and 49 s (PoshC2) per
+  24 h capture.
+
+### Acceptance criteria
+
+1. PoshC2: the C2 pair has `tls_no_sni`, single-destination JA3 and `cert_self_signed` set; at most 3 other pairs have
+   any one of them, and none has two.
+2. Backoff: the C2 pair has `http_host_is_ip` and a single-destination user agent; no other pair has either.
+3. DARPA week 5: the facts file is produced (HTTP only, no TLS in 1999) and `http_host_is_ip` is reported for the
+   attack hosts that use it, if any.
+4. The phase 1 beacon alerts on Backoff and PoshC2 carry `evidence` of at least 2; the Microsoft and burst decoys, if
+   they alert at all, carry 0.
+5. Tests for each fact, the fan-out derivation and the `evidence` count. `pytest` passes.
+
+## Phase 4: DNS tunnelling
 
 A DNS tunnel carries data in query names (long, random-looking subdomains of one domain) and in TXT/NULL answers, at a
 query rate no person produces.
 
 - **Data.** tshark's full EK output already includes `dns.qry.name`, `dns.qry.type` and `dns.resp.len`. Check the
-  dotted names `PacketCapture.unwrap` produces before matching them. The CTU-13 captures are header-only, so they
-  can't be used here.
+  names `PacketCapture.unwrap` produces before matching them (phase 3 found they are not the dotted Wireshark names).
+  The CTU-13 captures are header-only, so they can't be used here.
 - **New per-host columns in `hosts.csv`:**
   - `dns_queries`
   - `dns_names`: unique query names
@@ -150,7 +300,7 @@ query rate no person produces.
   - Both name the base domain in `detail`. CDN and anti-virus lookups also produce many unique subdomains; add the
     common ones to a shipped domain allowlist, sharing its format with `beacon_allow.txt`.
 - **Security.** Query names are attacker-controlled strings. They are written to CSV and JSONL as data, and must reach
-  phase 4 escaped and marked as untrusted.
+  phase 6 escaped and marked as untrusted.
 
 ### Acceptance criteria
 
@@ -162,7 +312,7 @@ query rate no person produces.
    `dns_txt_burst` raises.
 4. Tests for the base-domain function, each column and each rule. `pytest` passes.
 
-## Phase 3: hour-of-day baselines (lowest priority)
+## Phase 5: hour-of-day baselines (lowest priority)
 
 `VolumeBaseline` compares each window with the trailing hour, so it alerts at scheduled changes: start of day, nightly
 jobs, end of day. Only DARPA has enough days from one network to test this, so do it only if phase 0 shows DARPA
@@ -183,17 +333,17 @@ volume alerts clustering at the same times each day.
 2. Injected attacks in DARPA week 1 are still detected.
 3. Tests with synthetic multi-day windows. `pytest` passes.
 
-## Phase 4: LLM triage of incidents
+## Phase 6: LLM triage of incidents
 
 Our evaluation and published work (Houssel et al. 2024, about 50% accuracy on flow records, which is chance) agree: an
 LLM reading raw rows adds nothing to detection. Its use is explaining incidents the coded detector has already raised,
 so a person can decide faster.
 
-- New script `triage.py incidents.jsonl windows.csv hosts.csv [contacts.csv] -o triaged.jsonl`.
+- New script `triage.py incidents.jsonl windows.csv hosts.csv [contacts.csv] [facts.csv] -o triaged.jsonl`.
   - It is optional: `anthropic` goes in `requirements-triage.txt`, not `requirements.txt`, and `detect.py` stays
     stdlib-only.
 - Context per incident:
-  - the incident and its alerts
+  - the incident and its alerts, with their `evidence` facts
   - the host's rows from 10 minutes before to 10 minutes after (capped at 200 rows)
   - the matching window rows
   - the host's earlier incidents in the run
@@ -209,8 +359,8 @@ so a person can decide faster.
 - **Privacy:**
   - IPs are replaced with stable pseudonyms by default and restored in the output; `--no-pseudonymize` turns this off.
   - Nothing is sent without `--yes` or a confirmation prompt.
-- **Prompt injection.** DNS names and any future payload fields are attacker-controlled. They go in a marked data
-  block, the model has no tools, and the output is parsed as JSON only.
+- **Prompt injection.** DNS names, SNI, user agents, URIs and any future payload fields are attacker-controlled. They go
+  in a marked data block, the model has no tools, and the output is parsed as JSON only.
 - **Cost.** `--max-incidents` (default 50, highest observed/threshold ratio first), prompt caching of the fixed
   instructions, configurable model.
 
@@ -230,6 +380,10 @@ so a person can decide faster.
 - **Live capture for development or tuning.** None is available, so everything ships with defaults validated on the
   public captures. Live operation (rotating captures, incremental detection, alert delivery) is a later engineering
   task that adds no detection.
+- **Threat-intelligence blocklist matching.** Cheap to add later, but it cannot be validated on these captures: lab
+  C2 servers are on no list.
 - **Supervised models trained on the public datasets.** They would learn dataset artifacts, such as DARPA's TTL and
   timing quirks, instead of attacks.
-- **Payload inspection beyond DNS.** Exploits and web attacks need a signature IDS such as Suricata or Zeek.
+- **Payload inspection beyond DNS.** Exploits and web attacks need a signature IDS such as Suricata or Zeek. Zeek and
+  RITA remain worth running alongside; RITA's scores above are the reference our scorer is measured against, not a
+  dependency.

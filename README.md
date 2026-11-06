@@ -341,13 +341,14 @@ after; windows with an alert that matches no label count as false alarms.
 | CTU-13 scenario 5 (Virut bot), suppressions learned from scenario 11 | the bot, 200 s after its activity starts | | 0.83% |
 | CTU-13 scenario 11 (Rbot ICMP DDoS) | the DDoS | IRC C2 setup | high: several busy background hosts were not seen in the 30-minute capture used for learning |
 | IoT-23 Mirai, 24 h | all 4 floods, and the bot's C2 connection attempts | | 0.03% |
-| DARPA 1999 week 5 Monday, 22 h | 10 of 26 labeled attacks: SYN flood, UDP storm, 2 apache2 DoS, 2 smurf, telnet password guessing, dictionary brute force, warezclient, selfping | exploits and other payload-level or few-packet attacks | 0.80% (0.22% without a DNS storm from a misconfigured host that the dataset documents) |
+| DARPA 1999 week 5 Monday, 22 h | 10 of 26 labeled attacks: SYN flood, UDP storm, 2 apache2 DoS, 2 smurf, telnet password guessing, dictionary brute force, warezclient, selfping | exploits and other payload-level or few-packet attacks | 0.80% with no learning (92 of the 127 windows are a DNS storm from a misconfigured host that the dataset documents); 0.03% with suppressions learned from the 10 attack-free days of weeks 1 and 3, with the same 10 attacks detected |
 | DARPA 2000 LLDoS | the DDoS flood | sweep (seen only as router ARP), probe, exploit, trojan install | 0.9% |
 
 This approach cannot see payloads, so exploits, web attacks, DNS tunnels and C2 inside normal TLS stay invisible, as does
 anything a host does at a rate below its own normal. Run it alongside Zeek, Suricata or RITA, not instead of them.
-Planned next steps (beacon detection, DNS tunnelling, hour-of-day baselines, LLM triage of incidents) are in
-`docs/plans/2026-11-05-deferred-detection.md`.
+Planned next steps (beacon detection, long-horizon host profiles, TLS/HTTP facts per destination, DNS tunnelling,
+hour-of-day baselines, LLM triage of incidents) are in `docs/plans/2026-11-05-deferred-detection.md`, with the
+investigation results that scoped them.
 
 # performance
 This progam makes use of 5 cores, 4 for python Python and one for tshark.  
