@@ -137,3 +137,40 @@ def test_bad_labels_path_exits_without_starting_stages(tmp_path):
         timeout=30,
     )
     assert result.returncode == 2
+
+
+def test_connection_log(tmp_path):
+    shutil.copy(os.path.join(REPO, "logging_config.yaml"), tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            os.path.join(REPO, "main.py"),
+            "-s",
+            os.path.join(FIXTURES, "icmp_mix.pcap"),
+            "-wt",
+            "5000",
+            "-o",
+            "out.csv",
+            "-oc",
+            "connections.csv",
+            "--home-net",
+            "10.0.0.0/8",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    with open(tmp_path / "connections.csv") as f:
+        rows = list(csv.DictReader(f))
+    by_kind = {(r["proto"], r["src"], r["sport"]): r for r in rows}
+    # the IPv4 echo request and reply share a row; the IPv6 echo has no reply
+    echo = by_kind[("icmp", "10.0.0.1", "8")]
+    assert (echo["initiated"], echo["state"], echo["pkts_in"]) == ("1", "SF", "1")
+    # each ICMP port unreachable is its own row, not joined to the connection it quotes
+    unreach = by_kind[("icmp", "10.0.0.3", "3")]
+    assert unreach["pkts_out"] == "2"
+    syn = [r for r in rows if r["proto"] == "tcp"]
+    assert len(syn) == 1 and syn[0]["state"] == "S0" and syn[0]["initiated"] == "1"
+    assert all(r["proto"] in ("tcp", "udp", "icmp") for r in rows)

@@ -187,3 +187,15 @@ def test_window_columns_name_top_talkers_by_packets():
     ]
     columns = feed(packets).window_columns()
     assert columns["top_dst_by_packets"] == "10.0.0.80"
+
+
+def test_active_ftp_data_connections_count_as_one_port():
+    # the FTP server connects from port 20 to a new client port for every transfer
+    packets = [
+        ("tcp", tcp("10.0.0.21", "10.0.0.5", 20, 40000 + n, syn=True))
+        for n in range(30)
+    ]
+    rows = rows_by_host(feed(packets))
+    assert rows["10.0.0.21"]["contacted_ports"] == 1
+    assert rows["10.0.0.21"]["new_contacted_ports"] == 1
+    assert rows["10.0.0.21"]["syn_out"] == 30

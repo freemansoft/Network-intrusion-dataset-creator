@@ -7,10 +7,11 @@
     python3 tools/eval/run.py darpa99 --suppress darpa-supp.csv --set volume_z=8
 
 Datasets are declared in tools/eval/datasets.yaml. Output goes to <runs_dir>/<dataset>/
-(eval-runs/, gitignored): one directory per pcap with windows.csv, hosts.csv, console.txt and the
-logs, then alerts.jsonl, incidents.jsonl and score.txt at the top. A pcap whose windows.csv
-already exists is not captured again unless --recapture is given, so detector changes can be
-re-scored in seconds. --jobs captures that many pcaps at once (each main.py run uses about 5
+(eval-runs/, gitignored): one directory per pcap with windows.csv, hosts.csv, connections.csv,
+console.txt and the logs, then alerts.jsonl, incidents.jsonl and score.txt at the top. A pcap
+whose windows.csv already exists is not captured again unless --recapture is given, so detector
+changes can be re-scored in seconds (runs made before the connection log existed need
+--recapture to get connections.csv). --jobs captures that many pcaps at once (each main.py run uses about 5
 cores).
 """
 
@@ -94,6 +95,8 @@ def capture(pcap, run_dir, dataset, recapture):
         "windows.csv",
         "-oh",
         "hosts.csv",
+        "-oc",
+        "connections.csv",
         "--home-net",
         dataset["home_net"],
     ]
@@ -195,8 +198,11 @@ def main(argv=None):
 
     windows = [os.path.join(d, "windows.csv") for d in run_dirs]
     hosts = [os.path.join(d, "hosts.csv") for d in run_dirs]
+    connections = [os.path.join(d, "connections.csv") for d in run_dirs]
+    connections = [c for c in connections if os.path.exists(c)]
     alerts = os.path.join(out_dir, "alerts.jsonl")
     cmd = [sys.executable, os.path.join(REPO, "detect.py")] + windows + hosts
+    cmd += connections
     cmd += ["-o", alerts, "--incidents", os.path.join(out_dir, "incidents.jsonl")]
     for item in args.set:
         cmd += ["--set", item]

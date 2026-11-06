@@ -1,6 +1,6 @@
 # Plan: the connection log as the primary output
 
-Status: proposed 2026-11-06. Supersedes the window-summary framing; see the README section "What the window-summary
+Status: steps 0 and 1 done 2026-11-06 (results below each); step 2 next. Supersedes the window-summary framing; see the README section "What the window-summary
 approach is and isn't good for" and the findings kept in `docs/plans/2026-11-05-deferred-detection.md`.
 
 ## Why
@@ -45,20 +45,24 @@ One row per connection, written by `TimesAndCounts` from a new `connections.Conn
 - TCP: the 5-tuple. A connection starts at a SYN without ACK; its sender is the originator. A TCP packet with no
   prior SYN in the table starts a row with `initiated = 0` and the lower port as the responder side (capture started
   mid-connection, or the SYN was lost).
-- UDP: the 5-tuple. Originator is the sender of the first packet. `initiated = 1` only under the rule `hosts.csv`
-  already uses (destination port below 1024 and not above the source port), so DNS and NTP clients are originators
-  and high-port-to-high-port traffic is recorded but not called a contact.
-- ICMP and ICMPv6: keyed by (src, dst, type). An echo request starts a row with `initiated = 1`; the reply joins it.
-  Errors (unreachable, time exceeded) are rows of their own, so `unknown_inbound_source` and the beacon scorer can
-  ignore them.
+- UDP: the 5-tuple. The client by the rule `hosts.csv` already uses (destination port below 1024 and not above the
+  source port) is the originator, with `initiated = 1` when its packet was the first seen (a reply seen first gives
+  `initiated = 0`). Between two high ports the first sender is the originator with `initiated = 0`, so that traffic
+  is recorded but not called a contact.
+- ICMP and ICMPv6: an echo request and its replies share a row (`initiated = 1` when the request was seen); every
+  other type (errors, neighbor discovery) is a row per (src, dst, type, code), so `unknown_inbound_source` and the
+  beacon scorer can ignore them. As in Zeek, `sport` holds the type and `dport` the code.
 - ARP, IGMP and IP fragments stay in `windows.csv` only.
-- Active-mode FTP data: a SYN from source port 20 is recorded with `dport = ftpdata`, and `hosts.csv` gets the same
-  fix in `contacted_ports` and `new_contacted_ports`, as the earlier phase 2 specified.
+- Active-mode FTP data: the connection log keeps the real ports (the row's `sport` of 20 identifies it), and readers
+  collapse it. `hosts.csv` records a SYN from source port 20 as port `ftpdata` in `contacted_ports` and
+  `new_contacted_ports`, as the earlier phase 2 specified.
 
 **End of a connection.** TCP: both sides' FIN or either side's RST, then `conn_linger_sec` (default 5) with no
-packets; or `conn_idle_sec` (default 300) with no packets. UDP and ICMP: `conn_idle_udp_sec` (default 60) idle. All
-remaining rows are written at end of input with `state` saying they were cut off. Idle checks run at each window
-flush, so memory is bounded by the number of connections active within the idle time.
+packets; or `conn_idle_sec` (default 300) with no packets. UDP and ICMP: `conn_idle_udp_sec` (default 60) idle. A
+SYN from the originator after the responder answered starts a new connection (port reuse); before that it is a
+retry. The end is checked when the connection's next packet arrives, so rows do not depend on window boundaries; a
+sweep at each window flush only frees memory. Rows still open at end of input are written then (TCP `S1` or `OTH`
+says the connection never closed).
 
 **Columns.**
 
@@ -81,9 +85,10 @@ Rows are written when the connection ends, so the file is in end-time order; rea
 **Parser notes carried over from the TLS/HTTP investigation.** `capture.unwrap` produces
 `tls.handshake_extensions_server_name`, `tls.handshake_ja3`, `http.host`, `http.user_agent`, `http.request_uri`,
 `x509af.*` (not the Wireshark dotted names); look up those. tshark 4.0.1 emits `x509af_utcTime` twice at one level
-and `json.loads` keeps the last, so `cert_not_before` needs the duplicate recovered in `capture.py` before
-`json.loads` or is left empty with the limit documented. Self-signed is issuer equals subject. The CTU-13 captures are
-header-truncated, so these columns are empty there.
+and `json.loads` keeps the last; `capture.py` parses lines containing that key with an `object_pairs_hook` that also
+keeps both under `x509af.utcTime_all` (in a chain, each holds a list with the leaf first). tshark has no self-signed
+flag: a one-certificate chain whose issuer and subject name attributes are equal counts as self-signed, and longer
+chains do not. The CTU-13 captures are header-truncated, so these columns are empty there.
 
 **Scope.** Default is every connection with a home address on either side (`--conn-scope home|all`). Outbound-only
 is a filter in the reader, not the writer, because `unknown_inbound_source` needs inbound rows.
@@ -94,16 +99,31 @@ before and after, so the cost is known.
 
 ### Acceptance criteria
 
-1. On the fixture captures, every TCP connection with a visible handshake has the right originator, byte counts each
-   way and `state`; the FTP fixture shows `ftpdata`; an ICMP error does not join the echo row it quotes.
+1. Every TCP connection with a visible handshake has the right originator, byte counts each way and `state`; a SYN
+   from port 20 counts once in `hosts.csv`; an ICMP error does not join the echo row it quotes (unit tests and the
+   `icmp_mix` fixture).
 2. On PoshC2, the C2 pair's rows carry `tls_sni` empty, a JA3, `tls_version` 1.0 and `cert_self_signed = 1` on the
    rows with a certificate; on Backoff, `http_host` is the bare C2 IP. DARPA week 5 rows carry HTTP facts and no TLS.
 3. `windows.csv` and `hosts.csv` are byte-identical to today's on every registered dataset except for the `ftpdata`
    change in two `hosts.csv` columns.
 4. `tools/eval/run.py` passes `-oc` and hands `connections.csv` to `detect.py`; `classify_inputs` recognizes the file
-   by its header.
+   by its header (and ignores it until step 2).
 5. Tests for the table (start, end, states, orientation, idle, cut-off), each handshake column and the fix in
    `hosts.csv`. `pytest` passes.
+
+### Step 1 results (2026-11-06)
+
+| Criterion | Result |
+| - | - |
+| 1. Orientation, bytes, states; `ftpdata`; ICMP errors separate | Met: 15 unit tests in `tests/connections_test.py`, the `icmp_mix` pipeline test and a `hosts.csv` test |
+| 2. Handshake facts on the C2s | Met. PoshC2 1 h: the C2 is the only destination with ClientHellos lacking SNI (26 connections) and the only self-signed certificate of 41 seen, TLS1.0, valid from 1617423658 for 10 years. Backoff 1 h: the C2 is the only bare-IP `http_host` (126 requests, user agent and `/updates` URI on every row). DARPA week 5: 24,558 rows with HTTP facts, none with TLS |
+| 3. `windows.csv` and `hosts.csv` unchanged except `ftpdata` | Met. Identical on PoshC2 24 h, Backoff 24 h and IoT-23. DARPA week 5 differs only in `contacted_ports` and `new_contacted_ports` (411 host rows, all decreases) and the two window columns derived from them, all on the 7 hosts that open FTP data connections from port 20 |
+| 4. Harness passes `-oc`; `classify_inputs` recognizes the file | Met |
+| 5. Tests | Met: 81 passing |
+
+Agreement with Zeek on the C2 pairs: Backoff 1 h has 126 `SF` connections in both, and the 8 `OTH` rows (a lone ACK about 10 s after each close) appear in both; Zeek also writes the stray FIN before each as an `SH` row of its own, where ours folds it into the closed connection. PoshC2 1 h has 26 `SF` TLS connections in both.
+
+Runtime, `main` vs this branch, same machine, one run each: DARPA week 5 367 s vs 356 s, PoshC2 24 h 53 s vs 54 s, Backoff 24 h 26 s vs 37 s, IoT-23 82 s vs 82 s. The connection table costs nothing measurable on three of four; the Backoff difference is within run-to-run noise for a 26 s run. Rows: 231,647 (DARPA week 5), 19,603 (PoshC2 24 h), 8,886 (Backoff 24 h), 6,243 (IoT-23).
 
 ## Step 2: beacons, from the connection log
 

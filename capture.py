@@ -26,6 +26,21 @@ import json
 import time
 import logging
 
+# tshark emits a certificate's validity times as two x509af_utcTime keys in one object (not before,
+# then not after), and json.loads keeps only the last. Lines containing it are parsed with a hook
+# that also keeps every occurrence under x509af_x509af_utcTime_all (unwrapped to
+# x509af.utcTime_all) for the connection log. Other duplicate keys keep json's last-wins behavior.
+DUPLICATED_KEY = "x509af_x509af_utcTime"
+
+
+def keep_duplicate_times(pairs):
+    obj = {}
+    for key, value in pairs:
+        if key == DUPLICATED_KEY:
+            obj.setdefault(DUPLICATED_KEY + "_all", []).append(value)
+        obj[key] = value
+    return obj
+
 
 # capture packets using wireshark and convert them to python dictionary objects
 # args input-file-name, ethernet-interface, how-long
@@ -81,7 +96,12 @@ class PacketCapture:
                 if "layers" in line:
                     num_read += 1
                     self.logger.debug("Working with line %s", line)
-                    json_obj = json.loads(line.strip())
+                    if DUPLICATED_KEY in line:
+                        json_obj = json.loads(
+                            line.strip(), object_pairs_hook=keep_duplicate_times
+                        )
+                    else:
+                        json_obj = json.loads(line.strip())
                     source_filter = json_obj["layers"]
                     keyval = source_filter.items()
                     self.logger.debug("Working with dict %s", keyval)

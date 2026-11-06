@@ -352,22 +352,27 @@ def read_rows(paths):
 
 
 def classify_inputs(paths):
-    """Split main.py output files into windows CSVs and hosts CSVs by their header, each list
-    ordered by its first window start, so several days can be given in any order."""
-    kinds = {"windows": [], "hosts": []}
+    """Split main.py output files into windows, hosts and connections CSVs by their header, each
+    list ordered by its first start time, so several days can be given in any order."""
+    kinds = {"windows": [], "hosts": [], "connections": []}
     for path in paths:
         with open(path, newline="") as f:
             reader = csv.reader(f)
             header = next(reader, [])
             first = next(reader, None)
-        kind = "hosts" if "host" in header else "windows"
+        if "host" in header:
+            kind, time_column = "hosts", "window_start_time"
+        elif "state" in header and "start_msec" in header:
+            kind, time_column = "connections", "start_msec"
+        else:
+            kind, time_column = "windows", "window_start_time"
         start = float("inf")
-        if first and "window_start_time" in header:
-            start = float(first[header.index("window_start_time")])
+        if first and time_column in header:
+            start = float(first[header.index(time_column)])
         kinds[kind].append((start, path))
-    return (
-        [path for _, path in sorted(kinds["windows"])],
-        [path for _, path in sorted(kinds["hosts"])],
+    return tuple(
+        [path for _, path in sorted(kinds[kind])]
+        for kind in ("windows", "hosts", "connections")
     )
 
 
@@ -513,7 +518,8 @@ def main(argv=None):
             parser.error(f"unknown threshold {name}; known: {', '.join(t)}")
         t[name] = float(value)
 
-    windows, hosts = classify_inputs(args.inputs)
+    # connections CSVs are accepted now and read by the beacon scorer (connection-log plan, step 2)
+    windows, hosts, _connections = classify_inputs(args.inputs)
     if not windows:
         parser.error("no windows CSV among the inputs")
     alerts = detect(windows, hosts, t)

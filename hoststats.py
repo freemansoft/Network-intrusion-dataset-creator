@@ -19,6 +19,7 @@ AUTH_PORTS = {"21", "22", "23", "3389", "5900"}
 TRUE_VALUES = (True, "1", "true", "True")
 ICMP_ECHO_REQUEST = {"8", "128"}
 ICMP_UNREACH = {("icmp", "3"), ("icmpv6", "1")}
+FTP_DATA = "ftpdata"
 
 HOST_FIELDNAMES = [
     "window_start_time",
@@ -198,7 +199,10 @@ class WindowHosts:
         initiated_port = None
         initiated = False
         if protocol == "tcp" and syn:
-            initiated, initiated_port = True, dport
+            # active-mode FTP data: the server connects from port 20 to a port the client chose,
+            # so every transfer would otherwise be a new "contacted port"
+            initiated = True
+            initiated_port = FTP_DATA if str(sport) == "20" else dport
         elif (
             protocol == "udp"
             and dport is not None

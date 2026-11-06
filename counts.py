@@ -36,6 +36,7 @@ from hoststats import (
     TRUE_VALUES,
     labels_for,
 )
+from connections import CONN_FIELDNAMES, ConnectionTable
 
 
 # Creates the window counts and writes them to the CSV
@@ -116,6 +117,8 @@ class TimesAndCounts:
         host_topk=20,
         novelty_horizon_msec=600 * 1000,
         labels=(),
+        conn_file_path=None,
+        conn_scope="home",
     ):
         self.name = name
         # per-host output (hosts.csv) is written only when host_file_path is set
@@ -125,6 +128,12 @@ class TimesAndCounts:
         self.novelty = Novelty(novelty_horizon_msec)
         self.labels = list(labels)
         self.host_writer = None
+        # connection log (connections.csv) is written only when conn_file_path is set
+        self.conn_file_path = conn_file_path
+        self.connections = (
+            ConnectionTable(self.home_net, conn_scope) if conn_file_path else None
+        )
+        self.conn_writer = None
         self.logger = logging.getLogger(__name__)
         self.window_length_time = window_length_time
         self.csv_file_path = csv_file_path
@@ -158,6 +167,12 @@ class TimesAndCounts:
                     hostfile, fieldnames=HOST_FIELDNAMES, restval="0"
                 )
                 self.host_writer.writeheader()
+
+            connfile = None
+            if self.conn_file_path:
+                connfile = open(self.conn_file_path, "w", newline="")
+                self.conn_writer = csv.DictWriter(connfile, fieldnames=CONN_FIELDNAMES)
+                self.conn_writer.writeheader()
 
             pack_count_total = 0
             window_index = 0
@@ -250,6 +265,9 @@ class TimesAndCounts:
             csvfile.close()
             if hostfile is not None:
                 hostfile.close()
+            if connfile is not None:
+                self.write_connections(everything=True)
+                connfile.close()
         self.logger.info("Exiting thread")
 
     # updates the passed in cvar with values derived from packet_dict
@@ -346,6 +364,8 @@ class TimesAndCounts:
         target_window.host_window.update(
             packet_dict, Prot1, frame_time_epoch, self.home_net, self.novelty
         )
+        if self.connections is not None:
+            self.connections.update(packet_dict, Prot1, services, frame_time_epoch)
 
     def count_tcp_flags(self, packet_dict, target_window):
         syn = packet_dict.get("tcp.flags.syn") in TRUE_VALUES
@@ -452,6 +472,14 @@ class TimesAndCounts:
                 )
                 self.host_writer.writerow(row)
         self.novelty.prune(one_record.window_start_time)
+        if self.connections is not None:
+            # frees ended connections; rows do not depend on when the sweep runs
+            self.connections.sweep(one_record.window_end_time)
+            self.write_connections()
+
+    def write_connections(self, everything=False):
+        for conn in self.connections.drain(everything):
+            self.conn_writer.writerow(self.connections.row(conn, self.labels))
 
     # Reset all the values for this window
     def create_window(self, window_start_time, window_index):

@@ -318,6 +318,38 @@ python3 detect.py windows.csv hosts.csv -o alerts.jsonl --suppress suppress.csv
 `detect.py` takes any number of windows and hosts files, tells them apart by their header and reads them in time
 order, so consecutive daily captures of one sensor can be learned from or detected on as a single run.
 
+## Connection log
+
+`-oc connections.csv` writes one row per TCP, UDP or ICMP connection in the same pass, for connections with a home
+address on either side (`--conn-scope all` for every connection). It is the input for the detectors planned in
+`docs/plans/2026-11-06-connection-log.md` (beacons first); `detect.py` accepts the file but does not read it yet.
+
+```bash
+python3 main.py -s capture.pcap -wt 5000 -o windows.csv -oh hosts.csv -oc connections.csv --home-net 10.0.0.0/8
+```
+
+| Column | Meaning |
+| - | - |
+| `start_msec`, `end_msec` | first and last packet |
+| `src`, `sport`, `dst`, `dport`, `proto` | originator and responder (for ICMP, `sport` is the type and `dport` the code, as in Zeek) |
+| `initiated` | 1 when the originator was seen starting the connection: a SYN, a UDP packet to a port below 1024 from a higher one, an echo request |
+| `src_home`, `dst_home` | `--home-net` membership |
+| `service` | services seen on the connection (`services.py` names joined with `+`) |
+| `pkts_out`, `pkts_in`, `bytes_out`, `bytes_in` | each direction, frame bytes |
+| `state` | Zeek's names: `S0` no answer, `REJ` refused, `SF` normal close, `S1` open at the end, `RSTO`/`RSTR` reset by originator/responder, `OTH` no SYN seen. UDP and ICMP: `SF` if answered, else `S0` |
+| `syn_retries` | SYNs repeated before an answer |
+| `tls_sni`, `tls_ja3`, `tls_version` | from the ClientHello and ServerHello |
+| `cert_self_signed`, `cert_not_before`, `cert_not_after` | first certificate in the chain; self-signed means a one-certificate chain whose issuer equals its subject; epoch seconds |
+| `http_requests`, `http_host`, `http_user_agent`, `http_uri` | request count and the first request's values |
+| `label` | labeled attacks overlapping the connection that name either address |
+
+A TCP connection ends after both FINs or a RST plus 5 s of silence, or after 300 s idle; UDP and ICMP after 60 s idle.
+Strings from the wire (SNI, Host, user agent, URI) are cut to 512 characters and are attacker-controlled data. The CTU-13
+captures are truncated to the headers, so their handshake columns are empty. On the Active Countermeasures captures, the
+log separates both C2 servers on these columns alone: the PoshC2 server is the only destination with ClientHellos
+lacking SNI and the only self-signed certificate (TLS 1.0, valid for 10 years from just before the capture), and the
+Backoff server is the only HTTP Host header that is a bare IP address.
+
 ## Measured on labeled captures
 
 The captures are described in `datasets/SOURCES.md`, and `tools/eval/run.py` reproduces every number below:

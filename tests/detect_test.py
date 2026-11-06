@@ -7,6 +7,7 @@ import pytest
 
 import detect
 from counts import TimesAndCounts
+from connections import CONN_FIELDNAMES
 from hoststats import HOST_FIELDNAMES
 
 T0 = 1_600_000_000_000
@@ -276,7 +277,14 @@ def test_several_days_read_as_one_run_in_time_order(tmp_path):
     h1 = write_csv(tmp_path / "h1.csv", HOST_FIELDNAMES, rows1)
     h2 = write_csv(tmp_path / "h2.csv", HOST_FIELDNAMES, rows2)
 
-    assert detect.classify_inputs([h2, w2, h1, w1]) == ([w1, w2], [h1, h2])
+    c1 = write_csv(
+        tmp_path / "c1.csv", CONN_FIELDNAMES, [{"start_msec": T0, "state": "SF"}]
+    )
+    assert detect.classify_inputs([h2, c1, w2, h1, w1]) == (
+        [w1, w2],
+        [h1, h2],
+        [c1],
+    )
     # a day apart, the 600 s failed-connection span never holds 5 windows: no alert either way
     assert detect.detect([w1, w2], [h1, h2], detect.THRESHOLDS) == []
     # moved to the same day, the rows across the two files add up
