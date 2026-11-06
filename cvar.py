@@ -24,6 +24,8 @@
 # this was probably count vars in the original program
 # every property in here should/will end up in the csv output.
 
+from hoststats import WindowHosts
+
 
 class windowcounts:
 
@@ -87,6 +89,28 @@ class windowcounts:
     ip_fragment_frame_length = 0
     num_ip_fragments = 0
 
+    # TCP flag counts: SYN without ACK, SYN+ACK, RST, FIN
+    num_syn = 0
+    num_synack = 0
+    num_rst = 0
+    num_fin = 0
+
+    # fan-out and entropy, filled from host_window when the window is written (see hoststats.py)
+    max_contacted_ports_per_src = 0
+    top_src_by_contacted_ports = ""
+    max_contacted_ips_per_src = 0
+    top_src_by_contacted_ips = ""
+    max_contacting_ips_per_dst = 0
+    top_dst_by_contacting_ips = ""
+    top_src_by_packets = ""
+    top_dst_by_packets = ""
+    entropy_src_ip = 0.0
+    entropy_dst_ip = 0.0
+    entropy_dst_port = 0.0
+
+    # names of labeled attacks overlapping this window (--labels)
+    label = ""
+
     # all the calculated src/dst combinations
     IDs = set()
     # all the ports in this window
@@ -101,6 +125,8 @@ class windowcounts:
         self.num_packets = 0
         self.IDs = set()
         self.ports = set()
+        # per-host state for this window; not written to windows.csv directly
+        self.host_window = WindowHosts()
         self.window_start_time = window_start_time
         self.window_end_time = window_start_time
         self.window_index = window_index

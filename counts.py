@@ -28,6 +28,14 @@ from cvar import windowcounts
 from tumblingwindow import TumblingWindow
 import transitkeys
 import logging
+from hoststats import (
+    DEFAULT_HOME_NET,
+    HOST_FIELDNAMES,
+    HomeNet,
+    Novelty,
+    TRUE_VALUES,
+    labels_for,
+)
 
 
 # Creates the window counts and writes them to the CSV
@@ -73,6 +81,22 @@ class TimesAndCounts:
         "num_icmp_unreach",
         "ip_fragment_frame_length",
         "num_ip_fragments",
+        "num_syn",
+        "num_synack",
+        "num_rst",
+        "num_fin",
+        "max_contacted_ports_per_src",
+        "top_src_by_contacted_ports",
+        "max_contacted_ips_per_src",
+        "top_src_by_contacted_ips",
+        "max_contacting_ips_per_dst",
+        "top_dst_by_contacting_ips",
+        "top_src_by_packets",
+        "top_dst_by_packets",
+        "entropy_src_ip",
+        "entropy_dst_ip",
+        "entropy_dst_port",
+        "label",
     ]
 
     # ICMP type values for echo request/reply and destination unreachable, IPv4 and IPv6
@@ -81,9 +105,26 @@ class TimesAndCounts:
     ICMP_UNREACH_V6 = "1"
 
     def __init__(
-        self, name, window_length_time, window_length_count, csv_file_path, inQ
+        self,
+        name,
+        window_length_time,
+        window_length_count,
+        csv_file_path,
+        inQ,
+        host_file_path=None,
+        home_net=DEFAULT_HOME_NET,
+        host_topk=20,
+        novelty_horizon_msec=600 * 1000,
+        labels=(),
     ):
         self.name = name
+        # per-host output (hosts.csv) is written only when host_file_path is set
+        self.host_file_path = host_file_path
+        self.home_net = HomeNet(home_net)
+        self.host_topk = host_topk
+        self.novelty = Novelty(novelty_horizon_msec)
+        self.labels = list(labels)
+        self.host_writer = None
         self.logger = logging.getLogger(__name__)
         self.window_length_time = window_length_time
         self.csv_file_path = csv_file_path
@@ -109,6 +150,14 @@ class TimesAndCounts:
             writer = csv.DictWriter(csvfile, fieldnames=self.fieldnames, restval="0")
             writer.writeheader()
             csvfile.flush()
+
+            hostfile = None
+            if self.host_file_path:
+                hostfile = open(self.host_file_path, "w", newline="")
+                self.host_writer = csv.DictWriter(
+                    hostfile, fieldnames=HOST_FIELDNAMES, restval="0"
+                )
+                self.host_writer.writeheader()
 
             pack_count_total = 0
             window_index = 0
@@ -199,6 +248,8 @@ class TimesAndCounts:
                 "End of packet_dict. total timed packet_count: %d", pack_count_total
             )
             csvfile.close()
+            if hostfile is not None:
+                hostfile.close()
         self.logger.info("Exiting thread")
 
     # updates the passed in cvar with values derived from packet_dict
@@ -237,6 +288,7 @@ class TimesAndCounts:
             )
             self.count_services(services, target_window)
             target_window.num_tcp += 1
+            self.count_tcp_flags(packet_dict, target_window)
             self.accumulate_IDs(ID, target_window)
             self.accumulate_ports(
                 [packet_dict.get("tcp.srcport"), packet_dict.get("tcp.dstport")],
@@ -289,6 +341,23 @@ class TimesAndCounts:
             target_window.ip_fragment_frame_length += int(packet_dict["frame.len"])
             target_window.num_ip_fragments += 1
             self.accumulate_IDs(ID, target_window)
+
+        # per-host statistics feed hosts.csv and the fan-out/entropy window columns
+        target_window.host_window.update(
+            packet_dict, Prot1, frame_time_epoch, self.home_net, self.novelty
+        )
+
+    def count_tcp_flags(self, packet_dict, target_window):
+        syn = packet_dict.get("tcp.flags.syn") in TRUE_VALUES
+        ack = packet_dict.get("tcp.flags.ack") in TRUE_VALUES
+        if syn and not ack:
+            target_window.num_syn += 1
+        elif syn and ack:
+            target_window.num_synack += 1
+        if packet_dict.get("tcp.flags.reset") in TRUE_VALUES:
+            target_window.num_rst += 1
+        if packet_dict.get("tcp.flags.fin") in TRUE_VALUES:
+            target_window.num_fin += 1
 
     # an individual packet could be more than one thing.  Some SSDP traffic has HTTP over UDP
     def count_services(self, slist, target_window):
@@ -356,10 +425,33 @@ class TimesAndCounts:
         record_for_csv.pop("IDs", None)
         record_for_csv.pop("ports", None)
         record_for_csv.pop("window_index", None)
+        host_window = record_for_csv.pop("host_window")
         record_for_csv["num_connection_pairs"] = len(one_record.IDs)
         record_for_csv["num_ports"] = len(one_record.ports)
+        record_for_csv.update(host_window.window_columns())
+
+        # labels cover the nominal window span, or up to the last packet for count-only windows
+        window_end = (
+            one_record.window_start_time + self.window_length_time
+            if self.window_length_time
+            else one_record.window_end_time + 1
+        )
+        # set explicitly: restval would write "0" for an unset string column
+        record_for_csv["label"] = labels_for(
+            self.labels, one_record.window_start_time, window_end
+        )
 
         writer.writerow(record_for_csv)
+
+        if self.host_writer is not None:
+            for row in host_window.host_rows(self.home_net, self.host_topk):
+                row["window_start_time"] = one_record.window_start_time
+                row["window_end_time"] = one_record.window_end_time
+                row["label"] = labels_for(
+                    self.labels, one_record.window_start_time, window_end, row["host"]
+                )
+                self.host_writer.writerow(row)
+        self.novelty.prune(one_record.window_start_time)
 
     # Reset all the values for this window
     def create_window(self, window_start_time, window_index):

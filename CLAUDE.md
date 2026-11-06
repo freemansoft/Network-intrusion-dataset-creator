@@ -14,6 +14,10 @@ python3 main.py -s Razi_15012021.pcap -wp 100                    # 100-packet wi
 # Live capture (may need sudo for promiscuous mode)
 python3 main.py -i eth0 -l 120 -wt 5000
 
+# Per-host rows, home network, labels; then the offline detector
+python3 main.py -s capture.pcap -wt 5000 -o windows.csv -oh hosts.csv --home-net 10.0.0.0/8 --labels labels.csv
+python3 detect.py windows.csv hosts.csv -o alerts.jsonl --incidents incidents.jsonl [--set name=value]
+
 # Tests (pipeline_test.py runs main.py on tests/fixtures/*.pcap and is skipped without tshark)
 python3 -m pytest
 python3 -m pytest tests/tumblingwindow_test.py::test_inside_window
@@ -42,6 +46,8 @@ tshark -T ek ─pipe─> PacketCapture ─sharedQ─> PacketAnalyse ─serviceQ�
 - **Field names.** `capture.py` rewrites tshark's EK labels back into dotted Wireshark names (`ip_src` → `ip.src`, etc.). Detectors and services look up fields such as `packet_dict["frame.time_epoch"]` and `ip.len` by those dotted names. The renaming is ad hoc, so check what `PacketCapture.unwrap` produces before matching a new field (the IPv6 fragment offset comes out as `ipv6_fraghdr.offset`). When a field appears in several layers, the outermost wins: an ICMP error nests the quoted IP/UDP header inside its `icmp` object, and letting that overwrite the outer header misclassified the packet.
 - **Protocol detection** (`detectors.py`). `find_ip` tries `find_icmp` (ICMP and ICMPv6) and `find_ip_fragment` first, then `find_tcp`, `find_udp` and `find_igmp` (IPv4 only). The order matters: ICMP errors carry quoted TCP/UDP ports, and non-final fragments have an IP protocol number but no transport header (tshark attaches the reassembled datagram to the final fragment, which is counted under its own protocol). Anything that isn't IP goes to `find_non_ip`, which handles only ARP. Unrecognized packets are dropped but counted in `dvar.datasetSummary` (including the set of unanalyzed IP protocol numbers), which is logged once at exit and not written anywhere else.
 - **Service detection** (`services.py`). Services are identified by the presence of a field or port. One packet can match several services (for example, SSDP is also counted as HTTP).
+- **Per-host state** (`hoststats.py`). Each window owns a `WindowHosts` (`cvar.windowcounts.host_window`) that `analyze_update_window` feeds every packet. It produces the fan-out/entropy columns of `windows.csv` and the rows of `hosts.csv`. Cross-window novelty ("contacted for the first time within the horizon") lives in `Novelty` on `TimesAndCounts`. "Contacted" means contact the host initiated (TCP SYN, UDP to a port below 1024, ICMP echo request, ARP request); keep that rule when adding per-host columns, or servers and scan victims look like scanners.
+- **Detector** (`detect.py`). Offline and stdlib-only: reads `windows.csv` and `hosts.csv` in time order and writes JSONL alerts. Thresholds live in `detect.THRESHOLDS`. Plan, rationale and acceptance criteria: `docs/plans/2026-11-05-per-host-detector.md`.
 - **Windowing.** `tumblingwindow.TumblingWindow` decides window boundaries. Windows are non-overlapping and bounded by time (msec), packet count, or both; the window start is inclusive and the end is exclusive. `counts.py` flushes empty windows when time jumps forward past them.
 
 ### Adding a CSV column
@@ -50,6 +56,8 @@ A new column must be added in three places:
 1. A default-valued attribute on `cvar.windowcounts`
 2. The `fieldnames` list in `counts.TimesAndCounts`, which sets the column order
 3. The accumulation logic in `counts.py` (`count_services` / `analyze_update_window`)
+
+Window columns computed from per-host state are returned by `WindowHosts.window_columns()` instead of step 3. String columns must be set explicitly in `write_window`, because the CSV writer's `restval` would write `"0"`. A per-host column goes in `hoststats.HOST_FIELDNAMES`, `HostStats.__slots__`, `WindowHosts.update` and `host_rows`.
 
 New service or protocol counts also need a detector in `services.py` or `detectors.py`. The README's sample CSV table and "Issues" list document current column semantics and known gaps; update them when column behavior changes.
 
