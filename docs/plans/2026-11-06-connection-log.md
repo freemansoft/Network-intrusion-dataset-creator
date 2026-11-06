@@ -33,6 +33,8 @@ reimplementation of RITA v5's beacon formula that lives only in a session scratc
 `conn.log`, not a dependency of the detector. Record the command that produced each rank. Zeek is required to run it
 and is not required for anything else.
 
+Done 2026-11-06: `tools/eval/reference/` (`run.sh`, `rita_beacon.py`, README). The ranks reproduce exactly.
+
 ## Step 1: `connections.csv` (`-oc`, `--connfile`)
 
 One row per connection, written by `TimesAndCounts` from a new `connections.ConnectionTable` that

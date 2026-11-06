@@ -24,6 +24,7 @@ python3 tools/eval/run.py --list
 python3 tools/eval/run.py darpa99 [--suppress supp.csv] [--set name=value]
 python3 tools/eval/run.py darpa-attackfree --learn-suppressions supp.csv
 python3 tools/eval/run.py injected --python /path/to/python-with-scapy   # builds the injected pcap first
+sh tools/eval/reference/run.sh                  # RITA-formula beacon ranks, the bar for our scorer (needs zeek)
 
 # Tests (pipeline_test.py runs main.py on tests/fixtures/*.pcap and is skipped without tshark)
 python3 -m pytest
@@ -37,7 +38,7 @@ python3 tests/fixtures/make_fixtures.py
 - Code is formatted with `black`. There is no linter config.
 - `*.pcap`, `*.pcapng`, `*.cap`, `*.csv` and `*.log` are gitignored. The sample captures in the repo root exist only locally (more are at https://wiki.wireshark.org/SampleCaptures); `sample_output/*.csv` is the only committed output. `tests/fixtures/*.pcap` is un-ignored explicitly.
 - `datasets/` holds downloaded labeled intrusion captures and is gitignored. `datasets/SOURCES.md` (committed) records each file's URL, SHA-256, label source and attack intervals.
-- `tools/eval/` is the evaluation harness: `datasets.yaml` names each capture's pcaps, home net and label file (`labels/*.csv`, columns `label,start,end,ips`); `run.py` captures, detects and scores; `score.py` matches alerts to labels by host and time; `inject.py` and `gen_attacks.py` (scapy) build the synthetic-attack capture. There is no live traffic: the captures are the only development and test data, so every detector change is judged by `run.py` on them.
+- `tools/eval/` is the evaluation harness: `datasets.yaml` names each capture's pcaps, home net and label file (`labels/*.csv`, columns `label,start,end,ips`); `run.py` captures, detects and scores; `score.py` matches alerts to labels by host and time; `inject.py` and `gen_attacks.py` (scapy) build the synthetic-attack capture. `reference/` reimplements RITA's beacon score on Zeek's `conn.log` as a comparison baseline only; nothing else depends on it or on Zeek. There is no live traffic: the captures are the only development and test data, so every detector change is judged by `run.py` on them.
 
 ## Architecture
 
