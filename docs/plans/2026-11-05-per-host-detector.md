@@ -66,7 +66,7 @@ between two high ports (replies, P2P) floods the novelty counts.
 
 ## Deferred
 
-Planned in `docs/plans/2026-11-05-deferred-detection.md`, together with collecting a long baseline of one network.
+Planned in `docs/plans/2026-11-05-deferred-detection.md`, validated on public captures only.
 
 - C2 beaconing (needs per-destination contact timing; consider a contacts output or RITA).
 - DNS tunnelling (needs payload; the CTU captures are header-only).
