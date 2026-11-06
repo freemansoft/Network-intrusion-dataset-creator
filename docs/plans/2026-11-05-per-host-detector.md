@@ -79,7 +79,7 @@ Planned in `docs/plans/2026-11-05-deferred-detection.md`, validated on public ca
 | - | - |
 | 1. Injected attacks detected with the right host within 10 min | Met for fast port scan, slow scan, SYN flood, SSH brute force and bulk upload (all within 11 s). DNS tunnel and beacon are deferred, as planned. |
 | 2a. ≤1% alerted windows on un-injected CTU-5 | Met (0.83%) with suppressions learned from all of CTU-11 minus its labeled hosts. Without suppressions, 93%: a few always-noisy background hosts alert in every window. One of them (147.32.84.118) has failed-connection counts in the same range as the Virut bot, so no absolute threshold separates them. |
-| 2b. ≤0.5% on DARPA 1999 week 5 Monday inside | Not met: 0.80%. 92 of the 127 windows are a DNS storm from hume (172.16.112.100), a misconfiguration the dataset documents; excluding it gives 0.22%. No clean capture of that network was used for suppressions. |
+| 2b. ≤0.5% on DARPA 1999 week 5 Monday inside | Not met without learning: 0.80%. 92 of the 127 windows are a DNS storm from hume (172.16.112.100), a misconfiguration the dataset documents; excluding it gives 0.22%. Met with suppressions learned from the attack-free weeks 1 and 3 (added later, see the deferred-detection plan): 0.03%, same 10 attacks detected. |
 | 3. Floods still caught | Met: IoT-23 (4/4), CTU-11 ICMP DDoS, LLDoS ACK flood (single 5 s window), DARPA neptune and udpstorm. |
 | 4. Tests | Met: 61 passing. |
 
