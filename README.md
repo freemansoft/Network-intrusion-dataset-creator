@@ -376,13 +376,16 @@ In short: the time-window summary is a feature extractor, not a detector. The pe
 can be made to emit are where detection happens, and existing tools already emit those records from live traffic. Run
 this alongside Zeek, Suricata or RITA, not instead of them.
 
-**Where this goes next.** The project is being reframed around the connection log: per-connection rows become the
-primary output, `windows.csv` and `hosts.csv` become views derived from them, and detectors (and possibly an LLM
-triage step) read connections. If that does not produce detections that Zeek and RITA do not already give, the
-project's lasting contribution is the evaluation harness in `tools/eval/`: registered public captures, label files,
-synthetic-attack injection and a scorer, which did not exist in reusable form before. The earlier plan for beacons,
-host profiles, TLS/HTTP facts, DNS tunnelling, hour-of-day baselines and LLM triage, with the investigation results
-that scoped it, is in `docs/plans/2026-11-05-deferred-detection.md`.
+**Where this goes next.** The project is being reframed around the connection log
+(`docs/plans/2026-11-06-connection-log.md`): one row per connection with addresses, ports, times, bytes, state and
+the TLS/HTTP handshake fields becomes the primary output, `windows.csv` and `hosts.csv` stay as they are, and the new
+detectors (beacons first, then host profiles, DNS, and possibly an LLM triage step) read connections. That plan has a
+written keep-or-archive test: if the beacon scorer does not beat the RITA reference where it falls short, or the log
+detects nothing the summaries did not, the project is archived and its lasting contribution is the evaluation harness
+in `tools/eval/`: registered public captures, label files, synthetic-attack injection and a scorer, which did not
+exist in reusable form before. The earlier plan for beacons, host profiles, TLS/HTTP facts, DNS tunnelling,
+hour-of-day baselines and LLM triage, with the investigation results that scoped it, is in
+`docs/plans/2026-11-05-deferred-detection.md`.
 
 # performance
 This progam makes use of 5 cores, 4 for python Python and one for tshark.  
